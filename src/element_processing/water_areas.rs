@@ -2,7 +2,7 @@ use geo::{Contains, Intersects, LineString, Point, Polygon, Rect};
 use std::time::Instant;
 
 use crate::{
-    block_definitions::WATER,
+    block_definitions::{AIR, WATER},
     coordinate_system::cartesian::XZPoint,
     osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation},
     world_editor::WorldEditor,
@@ -66,6 +66,16 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
                 .collect();
             let empty_inners_xz: Vec<Vec<XZPoint>> = vec![];
 
+            let water_level = if let Some(ground) = editor.get_ground() {
+                let outer_points = individual_outers_xz
+                    .iter()
+                    .flatten()
+                    .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
+                ground.min_level(outer_points).unwrap_or(0)
+            } else {
+                0
+            };
+
             inverse_floodfill(
                 min_x,
                 min_z,
@@ -73,6 +83,7 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
                 max_z,
                 individual_outers_xz,
                 empty_inners_xz,
+                water_level,
                 editor,
                 start_time,
             );
@@ -90,6 +101,16 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
             .map(|x| x.iter().map(|y| y.xz()).collect::<Vec<_>>())
             .collect();
 
+        let water_level = if let Some(ground) = editor.get_ground() {
+            let outer_points = individual_outers_xz
+                .iter()
+                .flatten()
+                .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
+            ground.min_level(outer_points).unwrap_or(0)
+        } else {
+            0
+        };
+
         inverse_floodfill(
             min_x,
             min_z,
@@ -97,6 +118,7 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
             max_z,
             individual_outers_xz,
             inners_xz,
+            water_level,
             editor,
             start_time,
         );
@@ -206,6 +228,7 @@ fn inverse_floodfill(
     max_z: i32,
     outers: Vec<Vec<XZPoint>>,
     inners: Vec<Vec<XZPoint>>,
+    water_level: i32,
     editor: &mut WorldEditor,
     start_time: Instant,
 ) {
@@ -242,6 +265,7 @@ fn inverse_floodfill(
         (max_x, max_z),
         &outers,
         &inners,
+        water_level,
         editor,
         start_time,
     );
@@ -252,6 +276,7 @@ fn inverse_floodfill_recursive(
     max: (i32, i32),
     outers: &[Polygon],
     inners: &[Polygon],
+    water_level: i32,
     editor: &mut WorldEditor,
     start_time: Instant,
 ) {
@@ -269,7 +294,7 @@ fn inverse_floodfill_recursive(
     // Multiply as i64 to avoid overflow; in release builds where unchecked math is
     // enabled, this could cause the rest of this code to end up in an infinite loop.
     if ((max.0 - min.0) as i64) * ((max.1 - min.1) as i64) < ITERATIVE_THRES {
-        inverse_floodfill_iterative(min, max, 0, outers, inners, editor);
+        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor);
         return;
     }
 
@@ -291,7 +316,7 @@ fn inverse_floodfill_recursive(
         if outers.iter().any(|outer: &Polygon| outer.contains(&rect))
             && !inners.iter().any(|inner: &Polygon| inner.intersects(&rect))
         {
-            rect_fill(min_x, max_x, min_z, max_z, 0, editor);
+            rect_fill(min_x, max_x, min_z, max_z, water_level, editor);
             continue;
         }
 
@@ -312,6 +337,7 @@ fn inverse_floodfill_recursive(
                 (max_x, max_z),
                 &outers_intersects,
                 &inners_intersects,
+                water_level,
                 editor,
                 start_time,
             );
@@ -323,11 +349,13 @@ fn inverse_floodfill_recursive(
 fn inverse_floodfill_iterative(
     min: (i32, i32),
     max: (i32, i32),
-    ground_level: i32,
+    water_level: i32,
     outers: &[Polygon],
     inners: &[Polygon],
     editor: &mut WorldEditor,
 ) {
+    let ground = editor.get_ground().cloned();
+    let (min_x, min_z) = editor.get_min_coords();
     for x in min.0..max.0 {
         for z in min.1..max.1 {
             let p: Point = Point::new(x as f64, z as f64);
@@ -335,7 +363,15 @@ fn inverse_floodfill_iterative(
             if outers.iter().any(|poly: &Polygon| poly.contains(&p))
                 && inners.iter().all(|poly: &Polygon| !poly.contains(&p))
             {
-                editor.set_block(WATER, x, ground_level, z, None, None);
+                if let Some(ref g) = ground {
+                    let terrain = g.level(XZPoint::new(x - min_x, z - min_z));
+                    if terrain >= water_level {
+                        for y in water_level..=terrain {
+                            editor.set_block_absolute(AIR, x, y, z, None, Some(&[]));
+                        }
+                    }
+                }
+                editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
             }
         }
     }
@@ -346,12 +382,22 @@ fn rect_fill(
     max_x: i32,
     min_z: i32,
     max_z: i32,
-    ground_level: i32,
+    water_level: i32,
     editor: &mut WorldEditor,
 ) {
+    let ground = editor.get_ground().cloned();
+    let (min_x_world, min_z_world) = editor.get_min_coords();
     for x in min_x..max_x {
         for z in min_z..max_z {
-            editor.set_block(WATER, x, ground_level, z, None, None);
+            if let Some(ref g) = ground {
+                let terrain = g.level(XZPoint::new(x - min_x_world, z - min_z_world));
+                if terrain >= water_level {
+                    for y in water_level..=terrain {
+                        editor.set_block_absolute(AIR, x, y, z, None, Some(&[]));
+                    }
+                }
+            }
+            editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
         }
     }
 }
@@ -359,8 +405,12 @@ fn rect_fill(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_definitions::WATER;
-    use crate::coordinate_system::{cartesian::XZBBox, geographic::LLBBox};
+    use crate::block_definitions::{DIRT, WATER};
+    use crate::coordinate_system::{
+        cartesian::{XZBBox, XZPoint},
+        geographic::LLBBox,
+    };
+    use crate::ground::Ground;
     use crate::osm_parser::{ProcessedMember, ProcessedMemberRole, ProcessedWay};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -417,6 +467,93 @@ mod tests {
         for x in 1..10 {
             for z in 1..10 {
                 assert!(editor.check_for_block(x, 0, z, Some(&[WATER])));
+            }
+        }
+    }
+
+    #[test]
+    fn water_area_excavates_to_min_level() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(20.0, 20.0).unwrap();
+        let llbbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
+        let mut editor = WorldEditor::new(PathBuf::from("test_world"), &xzbbox, llbbox);
+
+        // Create artificial ground with varying heights
+        let mut heights = vec![vec![5; 20]; 20];
+        for row in heights.iter_mut() {
+            for x in 10..20 {
+                row[x] = 3;
+            }
+        }
+        let ground = Ground::from_heights(0, heights.clone());
+        editor.set_ground(&ground);
+
+        // Pre-fill terrain blocks up to ground level
+        for x in 0..20 {
+            for z in 0..20 {
+                let terrain = ground.level(XZPoint::new(x, z));
+                for y in 0..=terrain {
+                    editor.set_block_absolute(DIRT, x as i32, y, z as i32, None, None);
+                }
+            }
+        }
+
+        // Square polygon covering entire area
+        let n1 = ProcessedNode {
+            id: 1,
+            tags: HashMap::new(),
+            x: 0,
+            z: 0,
+        };
+        let n2 = ProcessedNode {
+            id: 2,
+            tags: HashMap::new(),
+            x: 19,
+            z: 0,
+        };
+        let n3 = ProcessedNode {
+            id: 3,
+            tags: HashMap::new(),
+            x: 19,
+            z: 19,
+        };
+        let n4 = ProcessedNode {
+            id: 4,
+            tags: HashMap::new(),
+            x: 0,
+            z: 19,
+        };
+        let outer = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
+
+        let way = ProcessedWay {
+            id: 1,
+            tags: HashMap::new(),
+            nodes: outer.clone(),
+        };
+        let member = ProcessedMember {
+            role: ProcessedMemberRole::Outer,
+            way,
+        };
+        let relation = ProcessedRelation {
+            id: 1,
+            tags: HashMap::from([(String::from("waterway"), String::from("riverbank"))]),
+            members: vec![member],
+        };
+
+        generate_water_areas(&mut editor, &relation);
+
+        // Water level should be min height (3)
+        for x in 1..19 {
+            for z in 1..19 {
+                assert_eq!(
+                    editor.get_block_absolute(x, 3, z),
+                    Some(WATER),
+                    "x {x} z {z}"
+                );
+                if x < 10 {
+                    // Higher terrain should be excavated
+                    assert_eq!(editor.get_block_absolute(x, 4, z), None, "x {x} z {z}");
+                    assert_eq!(editor.get_block_absolute(x, 5, z), None, "x {x} z {z}");
+                }
             }
         }
     }

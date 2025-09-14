@@ -452,6 +452,14 @@ impl<'a> WorldEditor<'a> {
         self.world.get_block(x, absolute_y, z).is_some()
     }
 
+    #[cfg(test)]
+    pub fn get_block_absolute(&self, x: i32, y: i32, z: i32) -> Option<Block> {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return None;
+        }
+        self.world.get_block(x, y, z)
+    }
+
     /// Places a sign at an absolute Y coordinate.
     #[allow(clippy::too_many_arguments, dead_code)]
     pub fn set_sign(
