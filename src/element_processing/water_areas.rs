@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::{
     block_definitions::{AIR, WATER},
     coordinate_system::cartesian::XZPoint,
-    osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation},
+    osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay},
     world_editor::WorldEditor,
 };
 
@@ -123,6 +123,60 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
             start_time,
         );
     }
+}
+
+pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
+    let start_time = Instant::now();
+
+    let is_water = way.tags.contains_key("water")
+        || way.tags.get("natural") == Some(&"water".to_string())
+        || way.tags.get("waterway") == Some(&"riverbank".to_string())
+        || way.tags.get("water") == Some(&"river".to_string())
+        || (way.tags.get("waterway") == Some(&"river".to_string())
+            && way.tags.get("area") == Some(&"yes".to_string()));
+
+    if !is_water {
+        return;
+    }
+
+    if let Some(layer) = way.tags.get("layer") {
+        if layer.parse::<i32>().map(|x| x < 0).unwrap_or(false) {
+            return;
+        }
+    }
+
+    if way.nodes.is_empty() {
+        return;
+    }
+
+    if way.nodes.first().map(|n| n.id) != way.nodes.last().map(|n| n.id) {
+        return;
+    }
+
+    let outer_xz: Vec<XZPoint> = way.nodes.iter().map(|n| n.xz()).collect();
+    let (min_x, min_z) = editor.get_min_coords();
+    let (max_x, max_z) = editor.get_max_coords();
+
+    let water_level = if let Some(ground) = editor.get_ground() {
+        let outer_points = outer_xz
+            .iter()
+            .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
+        ground.min_level(outer_points).unwrap_or(0)
+    } else {
+        0
+    };
+
+    inverse_floodfill(
+        min_x,
+        min_z,
+        max_x,
+        max_z,
+        vec![outer_xz],
+        vec![],
+        water_level,
+        editor,
+        start_time,
+    );
 }
 
 // Merges ways that share nodes into full loops
