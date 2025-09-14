@@ -1,5 +1,5 @@
-use geo::{BooleanOps, Coord, Contains, Intersects, LineString, Point, Polygon, Rect};
 use geo::coords_iter::CoordsIter;
+use geo::{BooleanOps, Contains, Coord, Intersects, LineString, Point, Polygon, Rect};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -100,8 +100,7 @@ fn generate_water_areas_internal(
         );
         let mut clipped_outers: Vec<Vec<ProcessedNode>> = Vec::new();
         for outer in &individual_outers {
-            let exterior: Vec<_> =
-                outer.iter().map(|n| (n.x as f64, n.z as f64)).collect();
+            let exterior: Vec<_> = outer.iter().map(|n| (n.x as f64, n.z as f64)).collect();
             let polygon = Polygon::new(LineString::from(exterior), vec![]);
             let clipped = polygon.intersection(&rect.to_polygon());
             for p in clipped {
@@ -128,6 +127,15 @@ fn generate_water_areas_internal(
             .iter()
             .map(|x| x.iter().map(|y| y.xz()).collect::<Vec<_>>())
             .collect();
+
+        let width = (max_x - min_x + 1) as usize;
+        let height = (max_z - min_z + 1) as usize;
+        let mut barrier = vec![vec![false; width]; height];
+        let mut seals_added = 0;
+        for outer in &individual_outers_xz {
+            seals_added += rasterize_and_seal(outer, &mut barrier, min_x, min_z, max_x, max_z);
+        }
+        println!("water area seals added: {}", seals_added);
 
         let default_level = editor.ground_level();
         let water_level = if let Some(ground) = editor.get_ground() {
@@ -347,6 +355,58 @@ fn draw_along_border(
     seals
 }
 
+fn rasterize_and_seal(
+    line: &[XZPoint],
+    barrier: &mut [Vec<bool>],
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+) -> i32 {
+    let mut border_nodes: Vec<(i32, i32)> = Vec::new();
+    let mut seals_added = 0;
+
+    let mut inside_prev = line
+        .first()
+        .map(|n| in_bounds(n.x, n.z, min_x, min_z, max_x, max_z))
+        .unwrap_or(false);
+
+    for pair in line.windows(2) {
+        let a = &pair[0];
+        let b = &pair[1];
+        let inside_curr = in_bounds(b.x, b.z, min_x, min_z, max_x, max_z);
+
+        for (x, _, z) in bresenham_line(a.x, 0, a.z, b.x, 0, b.z) {
+            if x < min_x || x > max_x || z < min_z || z > max_z {
+                continue;
+            }
+            let gx = (x - min_x) as usize;
+            let gz = (z - min_z) as usize;
+            barrier[gz][gx] = true;
+        }
+
+        if inside_prev != inside_curr {
+            let clipped = clip_to_border((a.x, a.z), (b.x, b.z), min_x, min_z, max_x, max_z);
+            border_nodes.push(clipped);
+        }
+        inside_prev = inside_curr;
+    }
+
+    if border_nodes.len() % 2 != 0 {
+        println!(
+            "odd number of border intersections for way: {}",
+            border_nodes.len()
+        );
+        return seals_added;
+    }
+
+    for pair in border_nodes.chunks(2) {
+        seals_added += draw_along_border(pair[0], pair[1], min_x, min_z, max_x, max_z, barrier);
+    }
+
+    seals_added
+}
+
 fn fill_from_barriers(
     editor: &mut WorldEditor,
     lines: &[Vec<ProcessedNode>],
@@ -362,45 +422,8 @@ fn fill_from_barriers(
     let mut seals_added_count = 0;
 
     for way in lines {
-        let mut border_nodes: Vec<(i32, i32)> = Vec::new();
-        let mut inside_prev = way
-            .first()
-            .map(|n| in_bounds(n.x, n.z, min_x, min_z, max_x, max_z))
-            .unwrap_or(false);
-
-        for pair in way.windows(2) {
-            let a = &pair[0];
-            let b = &pair[1];
-            let inside_curr = in_bounds(b.x, b.z, min_x, min_z, max_x, max_z);
-
-            for (x, _, z) in bresenham_line(a.x, 0, a.z, b.x, 0, b.z) {
-                if x < min_x || x > max_x || z < min_z || z > max_z {
-                    continue;
-                }
-                let gx = (x - min_x) as usize;
-                let gz = (z - min_z) as usize;
-                barrier[gz][gx] = true;
-            }
-
-            if inside_prev != inside_curr {
-                let clipped = clip_to_border((a.x, a.z), (b.x, b.z), min_x, min_z, max_x, max_z);
-                border_nodes.push(clipped);
-            }
-            inside_prev = inside_curr;
-        }
-
-        if border_nodes.len() % 2 != 0 {
-            println!(
-                "odd number of border intersections for way: {}",
-                border_nodes.len()
-            );
-            continue;
-        }
-
-        for pair in border_nodes.chunks(2) {
-            seals_added_count +=
-                draw_along_border(pair[0], pair[1], min_x, min_z, max_x, max_z, &mut barrier);
-        }
+        let line: Vec<XZPoint> = way.iter().map(|n| n.xz()).collect();
+        seals_added_count += rasterize_and_seal(&line, &mut barrier, min_x, min_z, max_x, max_z);
     }
     println!("barrier seals added: {}", seals_added_count);
 
