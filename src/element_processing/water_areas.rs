@@ -43,6 +43,23 @@ fn generate_water_areas_internal(
         }
     }
 
+    let mut all_lines: Vec<Vec<ProcessedNode>> = Vec::new();
+    all_lines.extend(outers.clone());
+    all_lines.extend(inners.clone());
+    let mut all_lines_open = false;
+    for o in &outers {
+        if o.first().map(|n| n.id) != o.last().map(|n| n.id) {
+            all_lines_open = true;
+            break;
+        }
+    }
+    if all_lines_open {
+        println!("barrier fill (inside) lines: {}", all_lines.len());
+        let water_level = editor.ground_level();
+        fill_from_barriers(editor, &all_lines, false, water_level);
+        return;
+    }
+
     for (i, outer_nodes) in outers.iter().enumerate() {
         let mut individual_outers = vec![outer_nodes.clone()];
 
@@ -53,47 +70,16 @@ fn generate_water_areas_internal(
                 i + 1,
                 element.id
             );
-            continue;
+            println!("barrier fill (inside) lines: {}", all_lines.len());
+            fill_from_barriers(editor, &all_lines, false, editor.ground_level());
+            return;
         }
 
         merge_loopy_loops(&mut inners);
         if !verify_loopy_loops(&inners) {
-            let empty_inners: Vec<Vec<ProcessedNode>> = vec![];
-            let mut temp_inners = empty_inners;
-            merge_loopy_loops(&mut temp_inners);
-
-            let (min_x, min_z) = editor.get_min_coords();
-            let (max_x, max_z) = editor.get_max_coords();
-            let individual_outers_xz: Vec<Vec<XZPoint>> = individual_outers
-                .iter()
-                .map(|x| x.iter().map(|y| y.xz()).collect::<Vec<_>>())
-                .collect();
-            let empty_inners_xz: Vec<Vec<XZPoint>> = vec![];
-
-            let default_level = editor.ground_level();
-            let water_level = if let Some(ground) = editor.get_ground() {
-                let outer_points = individual_outers_xz
-                    .iter()
-                    .flatten()
-                    .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-                ground.min_level(outer_points).unwrap_or(default_level)
-            } else {
-                default_level
-            };
-
-            inverse_floodfill(
-                min_x,
-                min_z,
-                max_x,
-                max_z,
-                individual_outers_xz,
-                empty_inners_xz,
-                water_level,
-                editor,
-                start_time,
-                fill_outside,
-            );
-            continue;
+            println!("barrier fill (inside) lines: {}", all_lines.len());
+            fill_from_barriers(editor, &all_lines, false, editor.ground_level());
+            return;
         }
 
         let (min_x, min_z) = editor.get_min_coords();
@@ -167,6 +153,9 @@ fn generate_water_area_from_way_internal(
     }
 
     if way.nodes.first().map(|n| n.id) != way.nodes.last().map(|n| n.id) {
+        println!("barrier fill (inside) lines: 1");
+        let level = editor.ground_level();
+        fill_from_barriers(editor, &[way.nodes.clone()], fill_outside, level);
         return;
     }
 
@@ -201,12 +190,12 @@ fn generate_water_area_from_way_internal(
 pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
     generate_water_area_from_way_internal(editor, way, false);
 }
-
-pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]) {
-    if ways.is_empty() {
-        return;
-    }
-
+fn fill_from_barriers(
+    editor: &mut WorldEditor,
+    lines: &[Vec<ProcessedNode>],
+    fill_outside: bool,
+    water_level: i32,
+) {
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
     let width = (max_x - min_x + 1) as usize;
@@ -214,7 +203,7 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
 
     let mut barrier = vec![vec![false; width]; height];
 
-    for way in ways {
+    for way in lines {
         for pair in way.windows(2) {
             let a = &pair[0];
             let b = &pair[1];
@@ -266,11 +255,15 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
     }
 
     let ground = editor.get_ground().cloned();
-    let water_level = editor.ground_level();
 
     for z in 0..height {
         for x in 0..width {
-            if outside[z][x] || barrier[z][x] {
+            let fill = if fill_outside {
+                outside[z][x] || barrier[z][x]
+            } else {
+                !outside[z][x] && !barrier[z][x]
+            };
+            if fill {
                 let world_x = min_x + x as i32;
                 let world_z = min_z + z as i32;
                 if let Some(ref g) = ground {
@@ -285,6 +278,15 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
             }
         }
     }
+}
+
+pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]) {
+    if ways.is_empty() {
+        return;
+    }
+    println!("coastline segments: {}", ways.len());
+    let level = editor.ground_level();
+    fill_from_barriers(editor, ways, true, level);
 }
 
 // Merges ways that share nodes into full loops
