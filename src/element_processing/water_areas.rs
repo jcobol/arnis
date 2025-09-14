@@ -1,5 +1,8 @@
 use geo::{Contains, Intersects, LineString, Point, Polygon, Rect};
+use std::collections::VecDeque;
 use std::time::Instant;
+
+use crate::bresenham::bresenham_line;
 
 use crate::{
     block_definitions::{AIR, WATER},
@@ -134,13 +137,6 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
     generate_water_areas_internal(editor, element, false);
 }
 
-pub fn generate_coastline_areas(editor: &mut WorldEditor, element: &ProcessedRelation) {
-    if element.tags.get("natural") != Some(&"coastline".to_string()) {
-        return;
-    }
-    generate_water_areas_internal(editor, element, true);
-}
-
 fn generate_water_area_from_way_internal(
     editor: &mut WorldEditor,
     way: &ProcessedWay,
@@ -206,11 +202,89 @@ pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay
     generate_water_area_from_way_internal(editor, way, false);
 }
 
-pub fn generate_coastline_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
-    if way.tags.get("natural") != Some(&"coastline".to_string()) {
+pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]) {
+    if ways.is_empty() {
         return;
     }
-    generate_water_area_from_way_internal(editor, way, true);
+
+    let (min_x, min_z) = editor.get_min_coords();
+    let (max_x, max_z) = editor.get_max_coords();
+    let width = (max_x - min_x + 1) as usize;
+    let height = (max_z - min_z + 1) as usize;
+
+    let mut barrier = vec![vec![false; width]; height];
+
+    for way in ways {
+        for pair in way.windows(2) {
+            let a = &pair[0];
+            let b = &pair[1];
+            for (x, _, z) in bresenham_line(a.x, 0, a.z, b.x, 0, b.z) {
+                if x < min_x || x > max_x || z < min_z || z > max_z {
+                    continue;
+                }
+                let gx = (x - min_x) as usize;
+                let gz = (z - min_z) as usize;
+                barrier[gz][gx] = true;
+            }
+        }
+    }
+
+    let mut outside = vec![vec![false; width]; height];
+    let mut q: VecDeque<(i32, i32)> = VecDeque::new();
+
+    for x in 0..width {
+        if !barrier[0][x] {
+            q.push_back((x as i32, 0));
+        }
+        if !barrier[height - 1][x] {
+            q.push_back((x as i32, (height - 1) as i32));
+        }
+    }
+    for z in 0..height {
+        if !barrier[z][0] {
+            q.push_back((0, z as i32));
+        }
+        if !barrier[z][width - 1] {
+            q.push_back(((width - 1) as i32, z as i32));
+        }
+    }
+
+    while let Some((x, z)) = q.pop_front() {
+        if x < 0 || z < 0 || x >= width as i32 || z >= height as i32 {
+            continue;
+        }
+        let ux = x as usize;
+        let uz = z as usize;
+        if outside[uz][ux] || barrier[uz][ux] {
+            continue;
+        }
+        outside[uz][ux] = true;
+        q.push_back((x - 1, z));
+        q.push_back((x + 1, z));
+        q.push_back((x, z - 1));
+        q.push_back((x, z + 1));
+    }
+
+    let ground = editor.get_ground().cloned();
+    let water_level = editor.ground_level();
+
+    for z in 0..height {
+        for x in 0..width {
+            if outside[z][x] || barrier[z][x] {
+                let world_x = min_x + x as i32;
+                let world_z = min_z + z as i32;
+                if let Some(ref g) = ground {
+                    let terrain = g.level(XZPoint::new(world_x - min_x, world_z - min_z));
+                    if terrain >= water_level {
+                        for y in water_level..=terrain {
+                            editor.set_block_absolute(AIR, world_x, y, world_z, None, Some(&[]));
+                        }
+                    }
+                }
+                editor.set_block_absolute(WATER, world_x, water_level, world_z, None, Some(&[]));
+            }
+        }
+    }
 }
 
 // Merges ways that share nodes into full loops
@@ -373,7 +447,9 @@ fn inverse_floodfill_recursive(
 ) {
     // Check if we've exceeded 25 seconds
     if start_time.elapsed().as_secs() > 25 {
-        println!("Water area generation exceeded 25 seconds, continuing anyway");
+        // Fall back: brute-force fill for the remaining region so we never leave it empty.
+        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
+        return;
     }
 
     const ITERATIVE_THRES: i64 = 10_000;
@@ -515,7 +591,9 @@ mod tests {
         geographic::LLBBox,
     };
     use crate::ground::Ground;
-    use crate::osm_parser::{ProcessedMember, ProcessedMemberRole, ProcessedWay};
+    use crate::osm_parser::{
+        ProcessedMember, ProcessedMemberRole, ProcessedRelation, ProcessedWay,
+    };
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -742,24 +820,9 @@ mod tests {
             x: 2,
             z: 8,
         };
-        let outer = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
+        let way_nodes = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
 
-        let way = ProcessedWay {
-            id: 1,
-            nodes: outer,
-            tags: HashMap::new(),
-        };
-        let member = ProcessedMember {
-            role: ProcessedMemberRole::Outer,
-            way,
-        };
-        let relation = ProcessedRelation {
-            id: 1,
-            tags: HashMap::from([(String::from("natural"), String::from("coastline"))]),
-            members: vec![member],
-        };
-
-        generate_coastline_areas(&mut editor, &relation);
+        generate_coastlines(&mut editor, &[way_nodes]);
 
         assert!(editor.check_for_block(0, 0, 0, Some(&[WATER])));
         assert!(editor.check_for_block(9, 0, 9, Some(&[WATER])));
