@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use crate::block_definitions::Block;
 use crate::block_definitions::*;
 
+/// Numeric identifier for the `AIR` block used inside block ID arrays.
 pub const AIR_ID: u16 = 0;
 
 struct Registry {
