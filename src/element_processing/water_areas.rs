@@ -1,5 +1,6 @@
-use geo::{Contains, Intersects, LineString, Point, Polygon, Rect};
-use std::collections::VecDeque;
+use geo::{BooleanOps, Coord, Contains, Intersects, LineString, Point, Polygon, Rect};
+use geo::coords_iter::CoordsIter;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::bresenham::bresenham_line;
@@ -84,6 +85,41 @@ fn generate_water_areas_internal(
 
         let (min_x, min_z) = editor.get_min_coords();
         let (max_x, max_z) = editor.get_max_coords();
+
+        // Clip assembled outer loops to world bounds. Clipping happens after
+        // loop assembly to preserve closed geometry.
+        let rect = Rect::new(
+            Coord {
+                x: min_x as f64,
+                y: min_z as f64,
+            },
+            Coord {
+                x: max_x as f64,
+                y: max_z as f64,
+            },
+        );
+        let mut clipped_outers: Vec<Vec<ProcessedNode>> = Vec::new();
+        for outer in &individual_outers {
+            let exterior: Vec<_> =
+                outer.iter().map(|n| (n.x as f64, n.z as f64)).collect();
+            let polygon = Polygon::new(LineString::from(exterior), vec![]);
+            let clipped = polygon.intersection(&rect.to_polygon());
+            for p in clipped {
+                let nodes = p
+                    .exterior()
+                    .coords_iter()
+                    .map(|c| ProcessedNode {
+                        id: 0,
+                        tags: HashMap::new(),
+                        x: c.x.round() as i32,
+                        z: c.y.round() as i32,
+                    })
+                    .collect::<Vec<_>>();
+                clipped_outers.push(nodes);
+            }
+        }
+        individual_outers = clipped_outers;
+
         let individual_outers_xz: Vec<Vec<XZPoint>> = individual_outers
             .iter()
             .map(|x| x.iter().map(|y| y.xz()).collect::<Vec<_>>())
