@@ -128,6 +128,21 @@ impl Ground {
     }
 }
 
+#[cfg(test)]
+impl Ground {
+    pub fn from_heights(ground_level: i32, heights: Vec<Vec<i32>>) -> Self {
+        Self {
+            elevation_enabled: true,
+            ground_level,
+            elevation_data: Some(ElevationData {
+                width: heights.first().map(|r| r.len()).unwrap_or(0),
+                height: heights.len(),
+                heights,
+            }),
+        }
+    }
+}
+
 pub fn generate_ground_data(args: &Args) -> Ground {
     if args.terrain {
         println!("{} Fetching elevation...", "[3/7]".bold());
