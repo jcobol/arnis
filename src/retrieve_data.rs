@@ -111,7 +111,22 @@ pub fn fetch_data_from_overpass(
         vec!["https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
     let mut url: &&str = api_servers.choose(&mut rand::thread_rng()).unwrap();
 
-    // Generate Overpass API query for bounding box
+    // Build a polygon string representing the bbox
+    let poly: String = format!(
+        "{} {} {} {} {} {} {} {} {} {}",
+        bbox.min().lat(),
+        bbox.min().lng(),
+        bbox.min().lat(),
+        bbox.max().lng(),
+        bbox.max().lat(),
+        bbox.max().lng(),
+        bbox.max().lat(),
+        bbox.min().lng(),
+        bbox.min().lat(),
+        bbox.min().lng()
+    );
+
+    // Generate Overpass API query for bounding box and polygon
     let query: String = format!(
         r#"[out:json][timeout:360][bbox:{},{},{},{}];
     (
@@ -140,11 +155,19 @@ pub fn fetch_data_from_overpass(
     )->.nodesinbbox;
     .relsinbbox out body;
     .waysinbbox out body;
-    .nodesinbbox out skel qt;"#,
+    .nodesinbbox out skel qt;
+    (
+      rel["natural"="water"](poly:"{poly}");
+      rel["water"](poly:"{poly}");
+    )->.relsinpoly;
+    (way(r.relsinpoly);)->.waysinpoly;
+    (node(w.waysinpoly);)->.nodesinpoly;
+    .relsinpoly out body; .waysinpoly out body; .nodesinpoly out skel qt;"#,
         bbox.min().lat(),
         bbox.min().lng(),
         bbox.max().lat(),
         bbox.max().lng(),
+        poly = poly,
     );
 
     {
