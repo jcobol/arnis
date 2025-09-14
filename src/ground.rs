@@ -81,41 +81,42 @@ impl Ground {
     fn interpolate_height(&self, x_ratio: f64, z_ratio: f64, data: &ElevationData) -> i32 {
         let x: usize = ((x_ratio * (data.width - 1) as f64).round() as usize).min(data.width - 1);
         let z: usize = ((z_ratio * (data.height - 1) as f64).round() as usize).min(data.height - 1);
-        data.heights[z][x]
+        data.height_at(x, z)
     }
 
     fn save_debug_image(&self, filename: &str) {
-        let heights = &self
+        let data = self
             .elevation_data
             .as_ref()
-            .expect("Elevation data not available")
-            .heights;
-        if heights.is_empty() || heights[0].is_empty() {
+            .expect("Elevation data not available");
+        if data.heights.is_empty() {
             return;
         }
 
-        let height: usize = heights.len();
-        let width: usize = heights[0].len();
+        let height: usize = data.height;
+        let width: usize = data.width;
         let mut img: image::ImageBuffer<Rgb<u8>, Vec<u8>> =
             RgbImage::new(width as u32, height as u32);
 
         let mut min_height: i32 = i32::MAX;
         let mut max_height: i32 = i32::MIN;
 
-        for row in heights {
-            for &h in row {
+        for z in 0..height {
+            for x in 0..width {
+                let h = data.height_at(x, z);
                 min_height = min_height.min(h);
                 max_height = max_height.max(h);
             }
         }
 
-        for (y, row) in heights.iter().enumerate() {
-            for (x, &h) in row.iter().enumerate() {
+        for z in 0..height {
+            for x in 0..width {
+                let h = data.height_at(x, z);
                 let normalized: u8 =
                     (((h - min_height) as f64 / (max_height - min_height) as f64) * 255.0) as u8;
                 img.put_pixel(
                     x as u32,
-                    y as u32,
+                    z as u32,
                     Rgb([normalized, normalized, normalized]),
                 );
             }
@@ -137,13 +138,26 @@ impl Ground {
 #[cfg(test)]
 impl Ground {
     pub fn from_heights(ground_level: i32, heights: Vec<Vec<i32>>) -> Self {
+        let height = heights.len();
+        let width = heights.first().map(|r| r.len()).unwrap_or(0);
+        let flat: Vec<i16> = heights
+            .into_iter()
+            .flat_map(|r| r.into_iter().map(|v| v as i16))
+            .collect();
+        // Use identity scaling so that height_at returns the raw values
+        let min_height = 0;
+        let height_range = 1;
         Self {
             elevation_enabled: true,
             ground_level,
             elevation_data: Some(ElevationData {
-                width: heights.first().map(|r| r.len()).unwrap_or(0),
-                height: heights.len(),
-                heights,
+                heights: flat,
+                width,
+                height,
+                min_height,
+                height_range,
+                ground_level,
+                scaled_range: 1.0,
             }),
         }
     }
