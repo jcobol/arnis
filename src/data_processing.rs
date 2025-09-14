@@ -67,12 +67,17 @@ pub fn generate_world(
                     highways::generate_highways(&mut editor, element, args, &elements);
                 } else if way.tags.contains_key("landuse") {
                     landuse::generate_landuse(&mut editor, way, args);
-                } else if way.tags.get("water") == Some(&"river".to_string())
+                } else if way.tags.contains_key("water")
+                    || way.tags.get("natural") == Some(&"water".to_string())
                     || way.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || way.tags.get("water") == Some(&"lake".to_string())
+                    || way.tags.get("water") == Some(&"reservoir".to_string())
                     || (way.tags.get("waterway") == Some(&"river".to_string())
                         && way.tags.get("area") == Some(&"yes".to_string()))
                 {
                     water_areas::generate_water_area_from_way(&mut editor, way);
+                } else if way.tags.get("natural") == Some(&"coastline".to_string()) {
+                    water_areas::generate_coastline_area_from_way(&mut editor, way);
                 } else if way.tags.contains_key("natural") {
                     natural::generate_natural(&mut editor, element, args);
                 } else if way.tags.contains_key("amenity") {
@@ -123,11 +128,14 @@ pub fn generate_world(
                 } else if rel.tags.contains_key("water")
                     || rel.tags.get("natural") == Some(&"water".to_string())
                     || rel.tags.get("waterway") == Some(&"riverbank".to_string())
-                    || rel.tags.get("water") == Some(&"river".to_string())
+                    || rel.tags.get("water") == Some(&"lake".to_string())
+                    || rel.tags.get("water") == Some(&"reservoir".to_string())
                     || (rel.tags.get("waterway") == Some(&"river".to_string())
                         && rel.tags.get("area") == Some(&"yes".to_string()))
                 {
                     water_areas::generate_water_areas(&mut editor, rel);
+                } else if rel.tags.get("natural") == Some(&"coastline".to_string()) {
+                    water_areas::generate_coastline_areas(&mut editor, rel);
                 } else if rel.tags.contains_key("natural") {
                     natural::generate_natural_from_relation(&mut editor, rel, args);
                 } else if rel.tags.contains_key("landuse") {

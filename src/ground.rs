@@ -62,6 +62,12 @@ impl Ground {
         coords.map(|c: XZPoint| self.level(c)).max()
     }
 
+    /// Returns the configured ground level regardless of elevation data
+    #[inline(always)]
+    pub fn ground_level(&self) -> i32 {
+        self.ground_level
+    }
+
     /// Converts game coordinates to elevation data coordinates
     #[inline(always)]
     fn get_data_coordinates(&self, coord: XZPoint, data: &ElevationData) -> (f64, f64) {
