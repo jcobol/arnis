@@ -67,6 +67,12 @@ pub fn generate_world(
                     highways::generate_highways(&mut editor, element, args, &elements);
                 } else if way.tags.contains_key("landuse") {
                     landuse::generate_landuse(&mut editor, way, args);
+                } else if way.tags.get("water") == Some(&"river".to_string())
+                    || way.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || (way.tags.get("waterway") == Some(&"river".to_string())
+                        && way.tags.get("area") == Some(&"yes".to_string()))
+                {
+                    water_areas::generate_water_area_from_way(&mut editor, way);
                 } else if way.tags.contains_key("natural") {
                     natural::generate_natural(&mut editor, element, args);
                 } else if way.tags.contains_key("amenity") {
@@ -76,7 +82,7 @@ pub fn generate_world(
                 } else if way.tags.contains_key("barrier") {
                     barriers::generate_barriers(&mut editor, element);
                 } else if way.tags.contains_key("waterway") {
-                    waterways::generate_waterways(&mut editor, way);
+                    waterways::generate_waterways(&mut editor, way, args);
                 } else if way.tags.contains_key("bridge") {
                     //bridges::generate_bridges(&mut editor, way, ground_level); // TODO FIX
                 } else if way.tags.contains_key("railway") {
@@ -117,6 +123,7 @@ pub fn generate_world(
                 } else if rel.tags.contains_key("water")
                     || rel.tags.get("natural") == Some(&"water".to_string())
                     || rel.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || rel.tags.get("water") == Some(&"river".to_string())
                     || (rel.tags.get("waterway") == Some(&"river".to_string())
                         && rel.tags.get("area") == Some(&"yes".to_string()))
                 {
