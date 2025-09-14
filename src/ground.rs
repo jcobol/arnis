@@ -22,8 +22,8 @@ impl Ground {
         }
     }
 
-    pub fn new_enabled(bbox: &LLBBox, scale: f64, ground_level: i32) -> Self {
-        let elevation_data = fetch_elevation_data(bbox, scale, ground_level)
+    pub fn new_enabled(bbox: &LLBBox, scale: f64, ground_level: i32, blur_radius: usize) -> Self {
+        let elevation_data = fetch_elevation_data(bbox, scale, ground_level, blur_radius)
             .expect("Failed to fetch elevation data");
         Self {
             elevation_enabled: true,
@@ -81,36 +81,34 @@ impl Ground {
     fn interpolate_height(&self, x_ratio: f64, z_ratio: f64, data: &ElevationData) -> i32 {
         let x: usize = ((x_ratio * (data.width - 1) as f64).round() as usize).min(data.width - 1);
         let z: usize = ((z_ratio * (data.height - 1) as f64).round() as usize).min(data.height - 1);
-        data.heights[z][x]
+        data.heights[z * data.width + x]
     }
 
     fn save_debug_image(&self, filename: &str) {
-        let heights = &self
+        let data = self
             .elevation_data
             .as_ref()
-            .expect("Elevation data not available")
-            .heights;
-        if heights.is_empty() || heights[0].is_empty() {
+            .expect("Elevation data not available");
+        if data.heights.is_empty() {
             return;
         }
 
-        let height: usize = heights.len();
-        let width: usize = heights[0].len();
+        let height: usize = data.height;
+        let width: usize = data.width;
         let mut img: image::ImageBuffer<Rgb<u8>, Vec<u8>> =
             RgbImage::new(width as u32, height as u32);
 
         let mut min_height: i32 = i32::MAX;
         let mut max_height: i32 = i32::MIN;
 
-        for row in heights {
-            for &h in row {
-                min_height = min_height.min(h);
-                max_height = max_height.max(h);
-            }
+        for &h in &data.heights {
+            min_height = min_height.min(h);
+            max_height = max_height.max(h);
         }
 
-        for (y, row) in heights.iter().enumerate() {
-            for (x, &h) in row.iter().enumerate() {
+        for y in 0..height {
+            for x in 0..width {
+                let h = data.heights[y * width + x];
                 let normalized: u8 =
                     (((h - min_height) as f64 / (max_height - min_height) as f64) * 255.0) as u8;
                 img.put_pixel(
@@ -137,13 +135,16 @@ impl Ground {
 #[cfg(test)]
 impl Ground {
     pub fn from_heights(ground_level: i32, heights: Vec<Vec<i32>>) -> Self {
+        let height = heights.len();
+        let width = heights.first().map(|r| r.len()).unwrap_or(0);
+        let flat: Vec<i32> = heights.into_iter().flatten().collect();
         Self {
             elevation_enabled: true,
             ground_level,
             elevation_data: Some(ElevationData {
-                width: heights.first().map(|r| r.len()).unwrap_or(0),
-                height: heights.len(),
-                heights,
+                width,
+                height,
+                heights: flat,
             }),
         }
     }
@@ -153,7 +154,8 @@ pub fn generate_ground_data(args: &Args) -> Ground {
     if args.terrain {
         println!("{} Fetching elevation...", "[3/7]".bold());
         emit_gui_progress_update(15.0, "Fetching elevation...");
-        let ground = Ground::new_enabled(&args.bbox, args.scale, args.ground_level);
+        let ground =
+            Ground::new_enabled(&args.bbox, args.scale, args.ground_level, args.blur_radius);
         if args.debug {
             ground.save_debug_image("elevation_debug");
         }

@@ -35,6 +35,10 @@ pub struct Args {
     #[arg(long, default_value_t = -62)]
     pub ground_level: i32,
 
+    /// Radius for Gaussian blur applied to terrain smoothing
+    #[arg(long, default_value_t = 5)]
+    pub blur_radius: usize,
+
     /// Enable terrain (optional)
     #[arg(long)]
     pub terrain: bool,

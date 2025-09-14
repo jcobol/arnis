@@ -19,8 +19,8 @@ const MAX_ZOOM: u8 = 15;
 /// Holds processed elevation data and metadata
 #[derive(Clone)]
 pub struct ElevationData {
-    /// Height values in Minecraft Y coordinates
-    pub(crate) heights: Vec<Vec<i32>>,
+    /// Height values in Minecraft Y coordinates stored in a flat buffer
+    pub(crate) heights: Vec<i32>,
     /// Width of the elevation grid
     pub(crate) width: usize,
     /// Height of the elevation grid
@@ -70,6 +70,7 @@ pub fn fetch_elevation_data(
     bbox: &LLBBox,
     scale: f64,
     ground_level: i32,
+    blur_radius: usize,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let (base_scale_z, base_scale_x) = geo_distance(bbox.min(), bbox.max());
 
@@ -221,56 +222,70 @@ pub fn fetch_elevation_data(
     // Filter extreme outliers that might be due to corrupted tile data
     filter_elevation_outliers(&mut height_grid);
 
-    // Calculate blur sigma based on grid resolution
-    // Reference points for tuning:
-    const SMALL_GRID_REF: f64 = 100.0; // Reference grid size
-    const SMALL_SIGMA_REF: f64 = 15.0; // Sigma for 100x100 grid
-    const LARGE_GRID_REF: f64 = 1000.0; // Reference grid size
-    const LARGE_SIGMA_REF: f64 = 7.0; // Sigma for 1000x1000 grid
+    let kernel_size: usize = blur_radius * 2 + 1;
+    let sigma: f64 = blur_radius as f64 / 2.0;
+    let kernel: Vec<f64> = create_gaussian_kernel(kernel_size, sigma);
 
-    let grid_size: f64 = (grid_width.min(grid_height) as f64).max(1.0);
-
-    let sigma: f64 = if grid_size <= SMALL_GRID_REF {
-        // Linear scaling for small grids
-        SMALL_SIGMA_REF * (grid_size / SMALL_GRID_REF)
-    } else {
-        // Logarithmic scaling for larger grids
-        let ln_small: f64 = SMALL_GRID_REF.ln();
-        let ln_large: f64 = LARGE_GRID_REF.ln();
-        let log_grid_size: f64 = grid_size.ln();
-        let t: f64 = (log_grid_size - ln_small) / (ln_large - ln_small);
-        SMALL_SIGMA_REF + t * (LARGE_SIGMA_REF - SMALL_SIGMA_REF)
-    };
-
-    /* eprintln!(
-        "Grid: {}x{}, Blur sigma: {:.2}",
-        grid_width, grid_height, sigma
-    ); */
-
-    // Continue with the existing blur and conversion to Minecraft heights...
-    let blurred_heights: Vec<Vec<f64>> = apply_gaussian_blur(&height_grid, sigma);
-
-    let mut mc_heights: Vec<Vec<i32>> = Vec::with_capacity(blurred_heights.len());
-
-    // Find min/max in raw data
+    let mut ring_buffer: Vec<Vec<f64>> = Vec::with_capacity(kernel_size);
+    let mut blurred_flat: Vec<f64> = vec![0.0; grid_width * grid_height];
     let mut min_height: f64 = f64::MAX;
     let mut max_height: f64 = f64::MIN;
     let mut extreme_low_count = 0;
     let mut extreme_high_count = 0;
 
-    for row in &blurred_heights {
-        for &height in row {
-            min_height = min_height.min(height);
-            max_height = max_height.max(height);
+    for y in 0..grid_height {
+        let h_row: Vec<f64> = horizontal_blur_row(&height_grid[y], &kernel);
+        ring_buffer.push(h_row);
 
-            // Count extreme values that might indicate data issues
-            if height < -1000.0 {
+        if y >= blur_radius {
+            let available = ring_buffer.len();
+            let kernel_start = kernel_size - available;
+            let out_y = y - blur_radius;
+            for x in 0..grid_width {
+                let mut sum: f64 = 0.0;
+                let mut weight_sum: f64 = 0.0;
+                for (j, row) in ring_buffer.iter().enumerate() {
+                    let weight = kernel[kernel_start + j];
+                    sum += row[x] * weight;
+                    weight_sum += weight;
+                }
+                let val = sum / weight_sum;
+                blurred_flat[out_y * grid_width + x] = val;
+                min_height = min_height.min(val);
+                max_height = max_height.max(val);
+                if val < -1000.0 {
+                    extreme_low_count += 1;
+                }
+                if val > 10000.0 {
+                    extreme_high_count += 1;
+                }
+            }
+            ring_buffer.remove(0);
+        }
+    }
+
+    while !ring_buffer.is_empty() {
+        let out_y = grid_height - ring_buffer.len();
+        for x in 0..grid_width {
+            let mut sum: f64 = 0.0;
+            let mut weight_sum: f64 = 0.0;
+            for (j, row) in ring_buffer.iter().enumerate() {
+                let weight = kernel[j];
+                sum += row[x] * weight;
+                weight_sum += weight;
+            }
+            let val = sum / weight_sum;
+            blurred_flat[out_y * grid_width + x] = val;
+            min_height = min_height.min(val);
+            max_height = max_height.max(val);
+            if val < -1000.0 {
                 extreme_low_count += 1;
             }
-            if height > 10000.0 {
+            if val > 10000.0 {
                 extreme_high_count += 1;
             }
         }
+        ring_buffer.remove(0);
     }
 
     eprintln!("Height data range: {min_height} to {max_height} m");
@@ -286,13 +301,11 @@ pub fn fetch_elevation_data(
     }
 
     let height_range: f64 = max_height - min_height;
-    // Apply scale factor to height scaling
-    let mut height_scale: f64 = BASE_HEIGHT_SCALE * scale.sqrt(); // sqrt to make height scaling less extreme
+    let mut height_scale: f64 = BASE_HEIGHT_SCALE * scale.sqrt();
     let mut scaled_range: f64 = height_range * height_scale;
 
-    // Adaptive scaling: ensure we don't exceed reasonable Y range
     let available_y_range = (MAX_Y - ground_level) as f64;
-    let safety_margin = 0.9; // Use 90% of available range
+    let safety_margin = 0.9;
     let max_allowed_range = available_y_range * safety_margin;
 
     if scaled_range > max_allowed_range {
@@ -305,28 +318,24 @@ pub fn fetch_elevation_data(
         eprintln!("Adjusted scaled range: {scaled_range:.1} blocks");
     }
 
-    // Convert to scaled Minecraft Y coordinates
-    for row in blurred_heights {
-        let mc_row: Vec<i32> = row
-            .iter()
-            .map(|&h| {
-                // Scale the height differences
-                let relative_height: f64 = (h - min_height) / height_range;
-                let scaled_height: f64 = relative_height * scaled_range;
-                // With terrain enabled, ground_level is used as the MIN_Y for terrain
-                ((ground_level as f64 + scaled_height).round() as i32).clamp(ground_level, MAX_Y)
-            })
-            .collect();
-        mc_heights.push(mc_row);
+    let mut mc_heights: Vec<i32> = Vec::with_capacity(blurred_flat.len());
+    for &h in &blurred_flat {
+        let relative_height: f64 = if height_range == 0.0 {
+            0.0
+        } else {
+            (h - min_height) / height_range
+        };
+        let scaled_height: f64 = relative_height * scaled_range;
+        mc_heights.push(
+            ((ground_level as f64 + scaled_height).round() as i32).clamp(ground_level, MAX_Y),
+        );
     }
 
     let mut min_block_height: i32 = i32::MAX;
     let mut max_block_height: i32 = i32::MIN;
-    for row in &mc_heights {
-        for &height in row {
-            min_block_height = min_block_height.min(height);
-            max_block_height = max_block_height.max(height);
-        }
+    for &height in &mc_heights {
+        min_block_height = min_block_height.min(height);
+        max_block_height = max_block_height.max(height);
     }
     eprintln!("Minecraft height data range: {min_block_height} to {max_block_height} blocks");
 
@@ -351,58 +360,6 @@ fn get_tile_coordinates(bbox: &LLBBox, zoom: u8) -> Vec<(u32, u32)> {
     tiles
 }
 
-fn apply_gaussian_blur(heights: &[Vec<f64>], sigma: f64) -> Vec<Vec<f64>> {
-    let kernel_size: usize = (sigma * 3.0).ceil() as usize * 2 + 1;
-    let kernel: Vec<f64> = create_gaussian_kernel(kernel_size, sigma);
-
-    // Apply blur
-    let mut blurred: Vec<Vec<f64>> = heights.to_owned();
-
-    // Horizontal pass
-    for row in blurred.iter_mut() {
-        let mut temp: Vec<f64> = row.clone();
-        for (i, val) in temp.iter_mut().enumerate() {
-            let mut sum: f64 = 0.0;
-            let mut weight_sum: f64 = 0.0;
-            for (j, k) in kernel.iter().enumerate() {
-                let idx: i32 = i as i32 + j as i32 - kernel_size as i32 / 2;
-                if idx >= 0 && idx < row.len() as i32 {
-                    sum += row[idx as usize] * k;
-                    weight_sum += k;
-                }
-            }
-            *val = sum / weight_sum;
-        }
-        *row = temp;
-    }
-
-    // Vertical pass
-    let height: usize = blurred.len();
-    let width: usize = blurred[0].len();
-    for x in 0..width {
-        let temp: Vec<_> = blurred
-            .iter()
-            .take(height)
-            .map(|row: &Vec<f64>| row[x])
-            .collect();
-
-        for (y, row) in blurred.iter_mut().enumerate().take(height) {
-            let mut sum: f64 = 0.0;
-            let mut weight_sum: f64 = 0.0;
-            for (j, k) in kernel.iter().enumerate() {
-                let idx: i32 = y as i32 + j as i32 - kernel_size as i32 / 2;
-                if idx >= 0 && idx < height as i32 {
-                    sum += temp[idx as usize] * k;
-                    weight_sum += k;
-                }
-            }
-            row[x] = sum / weight_sum;
-        }
-    }
-
-    blurred
-}
-
 fn create_gaussian_kernel(size: usize, sigma: f64) -> Vec<f64> {
     let mut kernel: Vec<f64> = vec![0.0; size];
     let center: f64 = size as f64 / 2.0;
@@ -418,6 +375,24 @@ fn create_gaussian_kernel(size: usize, sigma: f64) -> Vec<f64> {
     }
 
     kernel
+}
+
+fn horizontal_blur_row(row: &[f64], kernel: &[f64]) -> Vec<f64> {
+    let radius: isize = (kernel.len() / 2) as isize;
+    let mut out: Vec<f64> = vec![0.0; row.len()];
+    for x in 0..row.len() {
+        let mut sum: f64 = 0.0;
+        let mut weight_sum: f64 = 0.0;
+        for (k, &weight) in kernel.iter().enumerate() {
+            let idx = x as isize + k as isize - radius;
+            if idx >= 0 && (idx as usize) < row.len() {
+                sum += row[idx as usize] * weight;
+                weight_sum += weight;
+            }
+        }
+        out[x] = sum / weight_sum;
+    }
+    out
 }
 
 fn fill_nan_values(height_grid: &mut [Vec<f64>]) {

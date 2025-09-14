@@ -751,6 +751,7 @@ fn gui_start_generation(
                 downloader: "requests".to_string(),
                 scale: world_scale,
                 ground_level,
+                blur_radius: 5,
                 terrain: terrain_enabled,
                 interior: interior_enabled,
                 roof: roof_enabled,
