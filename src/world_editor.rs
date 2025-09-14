@@ -146,8 +146,9 @@ impl SectionToModify {
 
     fn to_section(&self, y: i8) -> Section {
         // Create a map of unique block+properties combinations to palette indices
-        let mut unique_blocks: Vec<(u16, Option<Value>)> = Vec::new();
-        let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> = FnvHashMap::default();
+        let mut unique_blocks: Vec<(u16, Block, Option<Value>)> = Vec::new();
+        let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> =
+            FnvHashMap::default();
 
         // Build unique block combinations and lookup table
         for (i, &block_id) in self.block_ids.iter().enumerate() {
@@ -160,7 +161,8 @@ impl SectionToModify {
             if let std::collections::hash_map::Entry::Vacant(e) = palette_lookup.entry(lookup_key) {
                 let palette_index = unique_blocks.len();
                 e.insert(palette_index);
-                unique_blocks.push((block_id, properties));
+                let block = block_registry::block(block_id);
+                unique_blocks.push((block_id, block, properties));
             }
         }
 
@@ -195,12 +197,9 @@ impl SectionToModify {
 
         let palette = unique_blocks
             .iter()
-            .map(|(block_id, stored_props)| {
-                let block = block_registry::block(*block_id);
-                PaletteItem {
-                    name: block.name().to_string(),
-                    properties: stored_props.clone().or_else(|| block.properties()),
-                }
+            .map(|(_, block, stored_props)| PaletteItem {
+                name: block.name().to_string(),
+                properties: stored_props.clone().or_else(|| block.properties()),
             })
             .collect();
 
