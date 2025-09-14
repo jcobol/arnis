@@ -8,19 +8,22 @@ use crate::{
     world_editor::WorldEditor,
 };
 
-pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelation) {
+fn generate_water_areas_internal(
+    editor: &mut WorldEditor,
+    element: &ProcessedRelation,
+    fill_outside: bool,
+) {
     let start_time = Instant::now();
 
-    // Check if this is a water relation
-    let is_water = element.tags.contains_key("water")
-        || element.tags.get("natural") == Some(&"water".to_string())
-        || element.tags.get("waterway") == Some(&"riverbank".to_string());
-
-    if !is_water {
-        return;
+    if !fill_outside {
+        let is_water = element.tags.contains_key("water")
+            || element.tags.get("natural") == Some(&"water".to_string())
+            || element.tags.get("waterway") == Some(&"riverbank".to_string());
+        if !is_water {
+            return;
+        }
     }
 
-    // Don't handle water below layer 0
     if let Some(layer) = element.tags.get("layer") {
         if layer.parse::<i32>().map(|x| x < 0).unwrap_or(false) {
             return;
@@ -37,7 +40,6 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
         }
     }
 
-    // Process each outer polygon individually
     for (i, outer_nodes) in outers.iter().enumerate() {
         let mut individual_outers = vec![outer_nodes.clone()];
 
@@ -48,12 +50,11 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
                 i + 1,
                 element.id
             );
-            continue; // Skip this outer if it's not valid
+            continue;
         }
 
         merge_loopy_loops(&mut inners);
         if !verify_loopy_loops(&inners) {
-            // If inners are invalid, process outer without inners
             let empty_inners: Vec<Vec<ProcessedNode>> = vec![];
             let mut temp_inners = empty_inners;
             merge_loopy_loops(&mut temp_inners);
@@ -66,14 +67,15 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
                 .collect();
             let empty_inners_xz: Vec<Vec<XZPoint>> = vec![];
 
+            let default_level = editor.ground_level();
             let water_level = if let Some(ground) = editor.get_ground() {
                 let outer_points = individual_outers_xz
                     .iter()
                     .flatten()
                     .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-                ground.min_level(outer_points).unwrap_or(0)
+                ground.min_level(outer_points).unwrap_or(default_level)
             } else {
-                0
+                default_level
             };
 
             inverse_floodfill(
@@ -86,6 +88,7 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
                 water_level,
                 editor,
                 start_time,
+                fill_outside,
             );
             continue;
         }
@@ -101,14 +104,15 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
             .map(|x| x.iter().map(|y| y.xz()).collect::<Vec<_>>())
             .collect();
 
+        let default_level = editor.ground_level();
         let water_level = if let Some(ground) = editor.get_ground() {
             let outer_points = individual_outers_xz
                 .iter()
                 .flatten()
                 .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-            ground.min_level(outer_points).unwrap_or(0)
+            ground.min_level(outer_points).unwrap_or(default_level)
         } else {
-            0
+            default_level
         };
 
         inverse_floodfill(
@@ -121,22 +125,39 @@ pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelatio
             water_level,
             editor,
             start_time,
+            fill_outside,
         );
     }
 }
 
-pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
+pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelation) {
+    generate_water_areas_internal(editor, element, false);
+}
+
+pub fn generate_coastline_areas(editor: &mut WorldEditor, element: &ProcessedRelation) {
+    if element.tags.get("natural") != Some(&"coastline".to_string()) {
+        return;
+    }
+    generate_water_areas_internal(editor, element, true);
+}
+
+fn generate_water_area_from_way_internal(
+    editor: &mut WorldEditor,
+    way: &ProcessedWay,
+    fill_outside: bool,
+) {
     let start_time = Instant::now();
 
-    let is_water = way.tags.contains_key("water")
-        || way.tags.get("natural") == Some(&"water".to_string())
-        || way.tags.get("waterway") == Some(&"riverbank".to_string())
-        || way.tags.get("water") == Some(&"river".to_string())
-        || (way.tags.get("waterway") == Some(&"river".to_string())
-            && way.tags.get("area") == Some(&"yes".to_string()));
-
-    if !is_water {
-        return;
+    if !fill_outside {
+        let is_water = way.tags.contains_key("water")
+            || way.tags.get("natural") == Some(&"water".to_string())
+            || way.tags.get("waterway") == Some(&"riverbank".to_string())
+            || way.tags.get("water") == Some(&"river".to_string())
+            || (way.tags.get("waterway") == Some(&"river".to_string())
+                && way.tags.get("area") == Some(&"yes".to_string()));
+        if !is_water {
+            return;
+        }
     }
 
     if let Some(layer) = way.tags.get("layer") {
@@ -157,13 +178,14 @@ pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
 
+    let default_level = editor.ground_level();
     let water_level = if let Some(ground) = editor.get_ground() {
         let outer_points = outer_xz
             .iter()
             .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-        ground.min_level(outer_points).unwrap_or(0)
+        ground.min_level(outer_points).unwrap_or(default_level)
     } else {
-        0
+        default_level
     };
 
     inverse_floodfill(
@@ -176,7 +198,19 @@ pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay
         water_level,
         editor,
         start_time,
+        fill_outside,
     );
+}
+
+pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
+    generate_water_area_from_way_internal(editor, way, false);
+}
+
+pub fn generate_coastline_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
+    if way.tags.get("natural") != Some(&"coastline".to_string()) {
+        return;
+    }
+    generate_water_area_from_way_internal(editor, way, true);
 }
 
 // Merges ways that share nodes into full loops
@@ -285,6 +319,7 @@ fn inverse_floodfill(
     water_level: i32,
     editor: &mut WorldEditor,
     start_time: Instant,
+    fill_outside: bool,
 ) {
     let inners: Vec<_> = inners
         .into_iter()
@@ -322,6 +357,7 @@ fn inverse_floodfill(
         water_level,
         editor,
         start_time,
+        fill_outside,
     );
 }
 
@@ -333,6 +369,7 @@ fn inverse_floodfill_recursive(
     water_level: i32,
     editor: &mut WorldEditor,
     start_time: Instant,
+    fill_outside: bool,
 ) {
     // Check if we've exceeded 25 seconds
     if start_time.elapsed().as_secs() > 25 {
@@ -348,7 +385,7 @@ fn inverse_floodfill_recursive(
     // Multiply as i64 to avoid overflow; in release builds where unchecked math is
     // enabled, this could cause the rest of this code to end up in an infinite loop.
     if ((max.0 - min.0) as i64) * ((max.1 - min.1) as i64) < ITERATIVE_THRES {
-        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor);
+        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
         return;
     }
 
@@ -367,13 +404,6 @@ fn inverse_floodfill_recursive(
             Point::new(max_x as f64, max_z as f64),
         );
 
-        if outers.iter().any(|outer: &Polygon| outer.contains(&rect))
-            && !inners.iter().any(|inner: &Polygon| inner.intersects(&rect))
-        {
-            rect_fill(min_x, max_x, min_z, max_z, water_level, editor);
-            continue;
-        }
-
         let outers_intersects: Vec<_> = outers
             .iter()
             .filter(|poly| poly.intersects(&rect))
@@ -385,7 +415,20 @@ fn inverse_floodfill_recursive(
             .cloned()
             .collect();
 
-        if !outers_intersects.is_empty() {
+        let inside =
+            outers.iter().any(|outer| outer.contains(&rect)) && inners_intersects.is_empty();
+
+        if (!fill_outside && inside)
+            || (fill_outside
+                && !inside
+                && outers_intersects.is_empty()
+                && inners_intersects.is_empty())
+        {
+            rect_fill(min_x, max_x, min_z, max_z, water_level, editor);
+            continue;
+        }
+
+        if !outers_intersects.is_empty() || !inners_intersects.is_empty() {
             inverse_floodfill_recursive(
                 (min_x, min_z),
                 (max_x, max_z),
@@ -394,6 +437,7 @@ fn inverse_floodfill_recursive(
                 water_level,
                 editor,
                 start_time,
+                fill_outside,
             );
         }
     }
@@ -407,15 +451,21 @@ fn inverse_floodfill_iterative(
     outers: &[Polygon],
     inners: &[Polygon],
     editor: &mut WorldEditor,
+    fill_outside: bool,
 ) {
     let ground = editor.get_ground().cloned();
     let (min_x, min_z) = editor.get_min_coords();
     for x in min.0..max.0 {
         for z in min.1..max.1 {
-            let p: Point = Point::new(x as f64, z as f64);
+            let cell = Rect::new(
+                Point::new(x as f64, z as f64),
+                Point::new((x + 1) as f64, (z + 1) as f64),
+            );
 
-            if outers.iter().any(|poly: &Polygon| poly.contains(&p))
-                && inners.iter().all(|poly: &Polygon| !poly.contains(&p))
+            let in_outer = outers.iter().any(|poly| poly.intersects(&cell));
+            let in_inner = inners.iter().any(|poly| poly.intersects(&cell));
+
+            if (fill_outside && (!in_outer || in_inner)) || (!fill_outside && in_outer && !in_inner)
             {
                 if let Some(ref g) = ground {
                     let terrain = g.level(XZPoint::new(x - min_x, z - min_z));
@@ -526,6 +576,56 @@ mod tests {
     }
 
     #[test]
+    fn lake_way_places_water() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(20.0, 20.0).unwrap();
+        let llbbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
+        let mut editor = WorldEditor::new(PathBuf::from("test_world"), &xzbbox, llbbox);
+
+        let n1 = ProcessedNode {
+            id: 1,
+            tags: HashMap::new(),
+            x: 0,
+            z: 0,
+        };
+        let n2 = ProcessedNode {
+            id: 2,
+            tags: HashMap::new(),
+            x: 10,
+            z: 0,
+        };
+        let n3 = ProcessedNode {
+            id: 3,
+            tags: HashMap::new(),
+            x: 10,
+            z: 10,
+        };
+        let n4 = ProcessedNode {
+            id: 4,
+            tags: HashMap::new(),
+            x: 0,
+            z: 10,
+        };
+        let nodes = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
+
+        let way = ProcessedWay {
+            id: 1,
+            nodes,
+            tags: HashMap::from([
+                (String::from("natural"), String::from("water")),
+                (String::from("water"), String::from("reservoir")),
+            ]),
+        };
+
+        generate_water_area_from_way(&mut editor, &way);
+
+        for x in 1..10 {
+            for z in 1..10 {
+                assert!(editor.check_for_block(x, 0, z, Some(&[WATER])));
+            }
+        }
+    }
+
+    #[test]
     fn water_area_excavates_to_min_level() {
         let xzbbox = XZBBox::rect_from_xz_lengths(20.0, 20.0).unwrap();
         let llbbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
@@ -610,5 +710,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn coastline_relation_fills_outside() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(10.0, 10.0).unwrap();
+        let llbbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
+        let mut editor = WorldEditor::new(PathBuf::from("test_world"), &xzbbox, llbbox);
+
+        let n1 = ProcessedNode {
+            id: 1,
+            tags: HashMap::new(),
+            x: 2,
+            z: 2,
+        };
+        let n2 = ProcessedNode {
+            id: 2,
+            tags: HashMap::new(),
+            x: 8,
+            z: 2,
+        };
+        let n3 = ProcessedNode {
+            id: 3,
+            tags: HashMap::new(),
+            x: 8,
+            z: 8,
+        };
+        let n4 = ProcessedNode {
+            id: 4,
+            tags: HashMap::new(),
+            x: 2,
+            z: 8,
+        };
+        let outer = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
+
+        let way = ProcessedWay {
+            id: 1,
+            nodes: outer,
+            tags: HashMap::new(),
+        };
+        let member = ProcessedMember {
+            role: ProcessedMemberRole::Outer,
+            way,
+        };
+        let relation = ProcessedRelation {
+            id: 1,
+            tags: HashMap::from([(String::from("natural"), String::from("coastline"))]),
+            members: vec![member],
+        };
+
+        generate_coastline_areas(&mut editor, &relation);
+
+        assert!(editor.check_for_block(0, 0, 0, Some(&[WATER])));
+        assert!(editor.check_for_block(9, 0, 9, Some(&[WATER])));
+        assert!(!editor.check_for_block(5, 0, 5, Some(&[WATER])));
     }
 }
