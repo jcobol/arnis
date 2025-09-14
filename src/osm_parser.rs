@@ -220,7 +220,9 @@ pub fn parse_osm_data(
         }
     }
 
-    // Second pass: process ways and clip them to bbox
+    // Second pass: process ways and clip them to bbox. Water features keep
+    // their full geometry so later steps like flood fill can operate on the
+    // complete shape without being truncated by early clipping.
     for element in data.ways {
         let mut nodes: Vec<ProcessedNode> = vec![];
         if let Some(node_ids) = &element.nodes {
@@ -232,15 +234,24 @@ pub fn parse_osm_data(
         }
 
         if !nodes.is_empty() {
-            // Clip the way to the bounding box
             let tags = element.tags.clone().unwrap_or_default();
-            let clipped_nodes = clip_way_to_bbox(&nodes, &xzbbox, &tags);
+            let is_water =
+                tags.contains_key("water") || tags.get("natural") == Some(&"water".into());
 
-            if !clipped_nodes.is_empty() {
+            // Clip non-water ways to the bounding box. Water ways keep their
+            // original nodes so the complete polygon is available for later
+            // processing like flood filling.
+            let nodes_to_use = if is_water {
+                nodes.clone()
+            } else {
+                clip_way_to_bbox(&nodes, &xzbbox, &tags)
+            };
+
+            if !nodes_to_use.is_empty() {
                 let processed: ProcessedWay = ProcessedWay {
                     id: element.id,
-                    tags: element.tags.clone().unwrap_or_default(),
-                    nodes: clipped_nodes,
+                    tags: tags.clone(),
+                    nodes: nodes_to_use,
                 };
 
                 ways_map.insert(element.id, processed.clone());
