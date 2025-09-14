@@ -1,16 +1,19 @@
 use geo::coords_iter::CoordsIter;
 use geo::{BooleanOps, Contains, Coord, Intersects, LineString, Point, Polygon, Rect};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Once;
 use std::time::Instant;
 
 use crate::bresenham::bresenham_line;
 
 use crate::{
-    block_definitions::{AIR, WATER},
+    block_definitions::WATER,
     coordinate_system::cartesian::XZPoint,
     osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay},
     world_editor::WorldEditor,
 };
+
+static LOG_SAMPLE: Once = Once::new();
 
 fn generate_water_areas_internal(
     editor: &mut WorldEditor,
@@ -56,7 +59,15 @@ fn generate_water_areas_internal(
     }
     if all_lines_open {
         println!("barrier fill (inside) lines: {}", all_lines.len());
-        let water_level = editor.ground_level();
+        let water_level = if let Some(g) = editor.get_ground() {
+            if g.elevation_enabled {
+                g.ground_level()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         fill_from_barriers(editor, &all_lines, false, water_level);
         return;
     }
@@ -72,14 +83,32 @@ fn generate_water_areas_internal(
                 element.id
             );
             println!("barrier fill (inside) lines: {}", all_lines.len());
-            fill_from_barriers(editor, &all_lines, false, editor.ground_level());
+            let water_level = if let Some(g) = editor.get_ground() {
+                if g.elevation_enabled {
+                    g.ground_level()
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            fill_from_barriers(editor, &all_lines, false, water_level);
             return;
         }
 
         merge_loopy_loops(&mut inners);
         if !verify_loopy_loops(&inners) {
             println!("barrier fill (inside) lines: {}", all_lines.len());
-            fill_from_barriers(editor, &all_lines, false, editor.ground_level());
+            let water_level = if let Some(g) = editor.get_ground() {
+                if g.elevation_enabled {
+                    g.ground_level()
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            fill_from_barriers(editor, &all_lines, false, water_level);
             return;
         }
 
@@ -137,13 +166,17 @@ fn generate_water_areas_internal(
         }
         println!("water area seals added: {}", seals_added);
 
-        let default_level = editor.ground_level();
+        let default_level = 0;
         let water_level = if let Some(ground) = editor.get_ground() {
-            let outer_points = individual_outers_xz
-                .iter()
-                .flatten()
-                .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-            ground.min_level(outer_points).unwrap_or(default_level)
+            if ground.elevation_enabled {
+                let outer_points = individual_outers_xz
+                    .iter()
+                    .flatten()
+                    .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
+                ground.min_level(outer_points).unwrap_or(default_level)
+            } else {
+                default_level
+            }
         } else {
             default_level
         };
@@ -198,8 +231,16 @@ fn generate_water_area_from_way_internal(
 
     if way.nodes.first().map(|n| n.id) != way.nodes.last().map(|n| n.id) {
         println!("barrier fill (inside) lines: 1");
-        let level = editor.ground_level();
-        fill_from_barriers(editor, &[way.nodes.clone()], fill_outside, level);
+        let water_level = if let Some(g) = editor.get_ground() {
+            if g.elevation_enabled {
+                g.ground_level()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        fill_from_barriers(editor, &[way.nodes.clone()], fill_outside, water_level);
         return;
     }
 
@@ -207,12 +248,16 @@ fn generate_water_area_from_way_internal(
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
 
-    let default_level = editor.ground_level();
+    let default_level = 0;
     let water_level = if let Some(ground) = editor.get_ground() {
-        let outer_points = outer_xz
-            .iter()
-            .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
-        ground.min_level(outer_points).unwrap_or(default_level)
+        if ground.elevation_enabled {
+            let outer_points = outer_xz
+                .iter()
+                .map(|pt| XZPoint::new(pt.x - min_x, pt.z - min_z));
+            ground.min_level(outer_points).unwrap_or(default_level)
+        } else {
+            default_level
+        }
     } else {
         default_level
     };
@@ -478,12 +523,35 @@ fn fill_from_barriers(
                 if let Some(ref g) = ground {
                     let terrain = g.level(XZPoint::new(world_x - min_x, world_z - min_z));
                     if terrain >= water_level {
+                        LOG_SAMPLE.call_once(|| {
+                            println!(
+                                "sample column ({}, {}): terrain={}, water_level={}",
+                                world_x, world_z, terrain, water_level
+                            );
+                        });
                         for y in water_level..=terrain {
-                            editor.set_block_absolute(AIR, world_x, y, world_z, None, Some(&[]));
+                            editor.set_block_absolute(WATER, world_x, y, world_z, None, Some(&[]));
                         }
+                    } else {
+                        editor.set_block_absolute(
+                            WATER,
+                            world_x,
+                            water_level,
+                            world_z,
+                            None,
+                            Some(&[]),
+                        );
                     }
+                } else {
+                    editor.set_block_absolute(
+                        WATER,
+                        world_x,
+                        water_level,
+                        world_z,
+                        None,
+                        Some(&[]),
+                    );
                 }
-                editor.set_block_absolute(WATER, world_x, water_level, world_z, None, Some(&[]));
             }
         }
     }
@@ -494,7 +562,15 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
         return;
     }
     println!("coastline segments: {}", ways.len());
-    let level = editor.ground_level();
+    let level = if let Some(g) = editor.get_ground() {
+        if g.elevation_enabled {
+            g.ground_level()
+        } else {
+            0
+        }
+    } else {
+        0
+    };
     fill_from_barriers(editor, ways, true, level);
 }
 
@@ -757,12 +833,21 @@ fn inverse_floodfill_iterative(
                 if let Some(ref g) = ground {
                     let terrain = g.level(XZPoint::new(x - min_x, z - min_z));
                     if terrain >= water_level {
+                        LOG_SAMPLE.call_once(|| {
+                            println!(
+                                "sample column ({}, {}): terrain={}, water_level={}",
+                                x, z, terrain, water_level
+                            );
+                        });
                         for y in water_level..=terrain {
-                            editor.set_block_absolute(AIR, x, y, z, None, Some(&[]));
+                            editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
                         }
+                    } else {
+                        editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
                     }
+                } else {
+                    editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
                 }
-                editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
             }
         }
     }
@@ -783,12 +868,21 @@ fn rect_fill(
             if let Some(ref g) = ground {
                 let terrain = g.level(XZPoint::new(x - min_x_world, z - min_z_world));
                 if terrain >= water_level {
+                    LOG_SAMPLE.call_once(|| {
+                        println!(
+                            "sample column ({}, {}): terrain={}, water_level={}",
+                            x, z, terrain, water_level
+                        );
+                    });
                     for y in water_level..=terrain {
-                        editor.set_block_absolute(AIR, x, y, z, None, Some(&[]));
+                        editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
                     }
+                } else {
+                    editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
                 }
+            } else {
+                editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
             }
-            editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
         }
     }
 }
@@ -993,9 +1087,17 @@ mod tests {
                     "x {x} z {z}"
                 );
                 if x < 10 {
-                    // Higher terrain should be excavated
-                    assert_eq!(editor.get_block_absolute(x, 4, z), None, "x {x} z {z}");
-                    assert_eq!(editor.get_block_absolute(x, 5, z), None, "x {x} z {z}");
+                    // Higher terrain should be filled with water up to the surface
+                    assert_eq!(
+                        editor.get_block_absolute(x, 4, z),
+                        Some(WATER),
+                        "x {x} z {z}"
+                    );
+                    assert_eq!(
+                        editor.get_block_absolute(x, 5, z),
+                        Some(WATER),
+                        "x {x} z {z}"
+                    );
                 }
             }
         }
