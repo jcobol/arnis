@@ -190,6 +190,127 @@ fn generate_water_area_from_way_internal(
 pub fn generate_water_area_from_way(editor: &mut WorldEditor, way: &ProcessedWay) {
     generate_water_area_from_way_internal(editor, way, false);
 }
+fn in_bounds(x: i32, z: i32, min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> bool {
+    x >= min_x && x <= max_x && z >= min_z && z <= max_z
+}
+
+fn clip_to_border(
+    a: (i32, i32),
+    b: (i32, i32),
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+) -> (i32, i32) {
+    let (ax, az) = (a.0 as f32, a.1 as f32);
+    let (bx, bz) = (b.0 as f32, b.1 as f32);
+    let dx = bx - ax;
+    let dz = bz - az;
+    let mut t_candidates: Vec<f32> = Vec::new();
+
+    if dx != 0.0 {
+        if bx < min_x as f32 {
+            t_candidates.push((min_x as f32 - ax) / dx);
+        } else if bx > max_x as f32 {
+            t_candidates.push((max_x as f32 - ax) / dx);
+        }
+    }
+    if dz != 0.0 {
+        if bz < min_z as f32 {
+            t_candidates.push((min_z as f32 - az) / dz);
+        } else if bz > max_z as f32 {
+            t_candidates.push((max_z as f32 - az) / dz);
+        }
+    }
+
+    let t = t_candidates
+        .into_iter()
+        .filter(|t| *t >= 0.0 && *t <= 1.0)
+        .fold(f32::INFINITY, f32::min);
+    let x = ax + dx * t;
+    let z = az + dz * t;
+    let ix = x.round() as i32;
+    let iz = z.round() as i32;
+    (ix.clamp(min_x, max_x), iz.clamp(min_z, max_z))
+}
+
+fn draw_along_border(
+    mut from: (i32, i32),
+    to: (i32, i32),
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+    barrier: &mut [Vec<bool>],
+) -> i32 {
+    let width = (max_x - min_x + 1) as i32;
+    let height = (max_z - min_z + 1) as i32;
+    let perimeter = 2 * (width + height) - 4;
+
+    let idx = |x: i32, z: i32| -> i32 {
+        if z == min_z {
+            x - min_x
+        } else if x == max_x {
+            (max_x - min_x) + (z - min_z)
+        } else if z == max_z {
+            (max_x - min_x) + (max_z - min_z) + (max_x - x)
+        } else {
+            2 * (max_x - min_x) + (max_z - min_z) + (max_z - z)
+        }
+    };
+
+    let mut idx_from = idx(from.0, from.1);
+    let idx_to = idx(to.0, to.1);
+    let cw_dist = (idx_to - idx_from + perimeter) % perimeter;
+    let ccw_dist = (idx_from - idx_to + perimeter) % perimeter;
+    let clockwise = cw_dist <= ccw_dist;
+    let steps = if clockwise { cw_dist } else { ccw_dist };
+    let mut seals = 0;
+
+    for _ in 0..=steps {
+        let gx = (from.0 - min_x) as usize;
+        let gz = (from.1 - min_z) as usize;
+        if !barrier[gz][gx] {
+            barrier[gz][gx] = true;
+            seals += 1;
+        }
+
+        if from == to {
+            break;
+        }
+
+        if clockwise {
+            if from.1 == min_z && from.0 < max_x {
+                from.0 += 1;
+            } else if from.0 == max_x && from.1 < max_z {
+                from.1 += 1;
+            } else if from.1 == max_z && from.0 > min_x {
+                from.0 -= 1;
+            } else if from.0 == min_x && from.1 > min_z {
+                from.1 -= 1;
+            }
+        } else {
+            if from.1 == min_z && from.0 > min_x {
+                from.0 -= 1;
+            } else if from.0 == min_x && from.1 < max_z {
+                from.1 += 1;
+            } else if from.1 == max_z && from.0 < max_x {
+                from.0 += 1;
+            } else if from.0 == max_x && from.1 > min_z {
+                from.1 -= 1;
+            }
+        }
+
+        idx_from = if clockwise {
+            (idx_from + 1) % perimeter
+        } else {
+            (idx_from - 1 + perimeter) % perimeter
+        };
+    }
+
+    seals
+}
+
 fn fill_from_barriers(
     editor: &mut WorldEditor,
     lines: &[Vec<ProcessedNode>],
@@ -202,11 +323,20 @@ fn fill_from_barriers(
     let height = (max_z - min_z + 1) as usize;
 
     let mut barrier = vec![vec![false; width]; height];
+    let mut seals_added_count = 0;
 
     for way in lines {
+        let mut border_nodes: Vec<(i32, i32)> = Vec::new();
+        let mut inside_prev = way
+            .first()
+            .map(|n| in_bounds(n.x, n.z, min_x, min_z, max_x, max_z))
+            .unwrap_or(false);
+
         for pair in way.windows(2) {
             let a = &pair[0];
             let b = &pair[1];
+            let inside_curr = in_bounds(b.x, b.z, min_x, min_z, max_x, max_z);
+
             for (x, _, z) in bresenham_line(a.x, 0, a.z, b.x, 0, b.z) {
                 if x < min_x || x > max_x || z < min_z || z > max_z {
                     continue;
@@ -215,8 +345,28 @@ fn fill_from_barriers(
                 let gz = (z - min_z) as usize;
                 barrier[gz][gx] = true;
             }
+
+            if inside_prev != inside_curr {
+                let clipped = clip_to_border((a.x, a.z), (b.x, b.z), min_x, min_z, max_x, max_z);
+                border_nodes.push(clipped);
+            }
+            inside_prev = inside_curr;
+        }
+
+        if border_nodes.len() % 2 != 0 {
+            println!(
+                "odd number of border intersections for way: {}",
+                border_nodes.len()
+            );
+            continue;
+        }
+
+        for pair in border_nodes.chunks(2) {
+            seals_added_count +=
+                draw_along_border(pair[0], pair[1], min_x, min_z, max_x, max_z, &mut barrier);
         }
     }
+    println!("barrier seals added: {}", seals_added_count);
 
     let mut outside = vec![vec![false; width]; height];
     let mut q: VecDeque<(i32, i32)> = VecDeque::new();
