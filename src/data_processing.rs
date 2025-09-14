@@ -116,6 +116,9 @@ pub fn generate_world(
                     buildings::generate_building_from_relation(&mut editor, rel, args);
                 } else if rel.tags.contains_key("water")
                     || rel.tags.get("natural") == Some(&"water".to_string())
+                    || rel.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || (rel.tags.get("waterway") == Some(&"river".to_string())
+                        && rel.tags.get("area") == Some(&"yes".to_string()))
                 {
                     water_areas::generate_water_areas(&mut editor, rel);
                 } else if rel.tags.contains_key("natural") {
