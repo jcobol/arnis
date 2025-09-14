@@ -2,6 +2,7 @@
 
 mod args;
 mod block_definitions;
+mod block_registry;
 mod bresenham;
 mod colors;
 mod coordinate_system;
