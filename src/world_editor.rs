@@ -102,6 +102,7 @@ struct PaletteItem {
 }
 
 struct SectionToModify {
+    /// Block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
     block_ids: [u16; 4096],
     // Store properties for blocks that have them, indexed by the same index as blocks array
     properties: FnvHashMap<usize, Value>,
