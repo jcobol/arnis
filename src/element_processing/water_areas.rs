@@ -11,9 +11,10 @@ use crate::{
 pub fn generate_water_areas(editor: &mut WorldEditor, element: &ProcessedRelation) {
     let start_time = Instant::now();
 
-    // Check if this is a water relation (either with water tag or natural=water)
+    // Check if this is a water relation
     let is_water = element.tags.contains_key("water")
-        || element.tags.get("natural") == Some(&"water".to_string());
+        || element.tags.get("natural") == Some(&"water".to_string())
+        || element.tags.get("waterway") == Some(&"riverbank".to_string());
 
     if !is_water {
         return;
@@ -351,6 +352,72 @@ fn rect_fill(
     for x in min_x..max_x {
         for z in min_z..max_z {
             editor.set_block(WATER, x, ground_level, z, None, None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_definitions::WATER;
+    use crate::coordinate_system::{cartesian::XZBBox, geographic::LLBBox};
+    use crate::osm_parser::{ProcessedMember, ProcessedMemberRole, ProcessedWay};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    #[test]
+    fn riverbank_relation_places_water() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(20.0, 20.0).unwrap();
+        let llbbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
+        let mut editor = WorldEditor::new(PathBuf::from("test_world"), &xzbbox, llbbox);
+
+        let n1 = ProcessedNode {
+            id: 1,
+            tags: HashMap::new(),
+            x: 0,
+            z: 0,
+        };
+        let n2 = ProcessedNode {
+            id: 2,
+            tags: HashMap::new(),
+            x: 10,
+            z: 0,
+        };
+        let n3 = ProcessedNode {
+            id: 3,
+            tags: HashMap::new(),
+            x: 10,
+            z: 10,
+        };
+        let n4 = ProcessedNode {
+            id: 4,
+            tags: HashMap::new(),
+            x: 0,
+            z: 10,
+        };
+        let outer = vec![n1.clone(), n2.clone(), n3.clone(), n4.clone(), n1.clone()];
+
+        let way = ProcessedWay {
+            id: 1,
+            nodes: outer,
+            tags: HashMap::new(),
+        };
+        let member = ProcessedMember {
+            role: ProcessedMemberRole::Outer,
+            way,
+        };
+        let relation = ProcessedRelation {
+            id: 1,
+            tags: HashMap::from([(String::from("waterway"), String::from("riverbank"))]),
+            members: vec![member],
+        };
+
+        generate_water_areas(&mut editor, &relation);
+
+        for x in 1..10 {
+            for z in 1..10 {
+                assert!(editor.check_for_block(x, 0, z, Some(&[WATER])));
+            }
         }
     }
 }
