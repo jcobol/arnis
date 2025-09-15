@@ -1,4 +1,5 @@
 use crate::args::Args;
+use crate::biomes::biome_from_tags;
 use crate::block_definitions::*;
 use crate::element_processing::tree::Tree;
 use crate::floodfill::flood_fill_area;
@@ -10,6 +11,8 @@ pub fn generate_landuse(editor: &mut WorldEditor, element: &ProcessedWay, args: 
     // Determine block type based on landuse tag
     let binding: String = "".to_string();
     let landuse_tag: &String = element.tags.get("landuse").unwrap_or(&binding);
+
+    let biome = biome_from_tags(&element.tags);
 
     let block_type = match landuse_tag.as_str() {
         "greenfield" | "meadow" | "grass" | "orchard" | "forest" => GRASS_BLOCK,
@@ -51,6 +54,10 @@ pub fn generate_landuse(editor: &mut WorldEditor, element: &ProcessedWay, args: 
     let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
 
     for (x, z) in floor_area {
+        if let Some(b) = biome {
+            editor.set_biome(b, x, 0, z);
+        }
+
         if landuse_tag == "traffic_island" {
             editor.set_block(block_type, x, 1, z, None, None);
         } else if landuse_tag == "construction" || landuse_tag == "railway" {
