@@ -73,8 +73,10 @@ fn infer_width_from_tags(tags: &HashMap<String, String>, default_blocks: i32, sc
 pub fn generate_waterways(editor: &mut WorldEditor, element: &ProcessedWay, args: &Args) {
     if let Some(waterway_type) = element.tags.get("waterway") {
         let (default_width_blocks, waterway_depth) = get_waterway_dimensions(waterway_type);
-        let scaled_default = ((default_width_blocks as f32) * args.scale as f32).clamp(1.0, 5000.0) as i32;
-        let waterway_width = infer_width_from_tags(&element.tags, scaled_default, args.scale as f32);
+        let scaled_default =
+            ((default_width_blocks as f32) * args.scale as f32).clamp(1.0, 5000.0) as i32;
+        let waterway_width =
+            infer_width_from_tags(&element.tags, scaled_default, args.scale as f32);
 
         // Skip layers below the ground level
         if matches!(
@@ -111,14 +113,14 @@ pub fn generate_waterways(editor: &mut WorldEditor, element: &ProcessedWay, args
 /// Determines width and depth based on waterway type
 fn get_waterway_dimensions(waterway_type: &str) -> (i32, i32) {
     match waterway_type {
-        "river" => (30, 4),   // Large rivers: 30 blocks wide, 4 blocks deep
-        "canal" => (16, 3),   // Canals: 16 blocks wide, 3 blocks deep
-        "stream" => (6, 2),   // Streams: 6 blocks wide, 2 blocks deep
-        "fairway" => (12, 3), // Shipping fairways: 12 blocks wide, 3 blocks deep
-        "flowline" => (2, 1), // Water flow lines: 2 blocks wide, 1 block deep
+        "river" => (30, 4),          // Large rivers: 30 blocks wide, 4 blocks deep
+        "canal" => (16, 3),          // Canals: 16 blocks wide, 3 blocks deep
+        "stream" => (6, 2),          // Streams: 6 blocks wide, 2 blocks deep
+        "fairway" => (12, 3),        // Shipping fairways: 12 blocks wide, 3 blocks deep
+        "flowline" => (2, 1),        // Water flow lines: 2 blocks wide, 1 block deep
         "brook" | "ditch" => (4, 2), // Small channels: 4 blocks wide, 2 blocks deep
-        "drain" => (4, 2),    // Drainage: 4 blocks wide, 2 blocks deep
-        _ => (8, 2),           // Default: 8 blocks wide, 2 blocks deep
+        "drain" => (4, 2),           // Drainage: 4 blocks wide, 2 blocks deep
+        _ => (8, 2),                 // Default: 8 blocks wide, 2 blocks deep
     }
 }
 

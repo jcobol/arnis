@@ -1,4 +1,5 @@
 use crate::block_definitions::*;
+use crate::block_registry::{self, AIR_ID};
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::coordinate_system::geographic::LLBBox;
 use crate::ground::Ground;
@@ -100,24 +101,31 @@ struct PaletteItem {
     properties: Option<Value>,
 }
 
+/// Mutable representation of a 16×16×16 chunk section.
+///
+/// Each entry stores a `u16` identifier from the global block registry rather
+/// than a full [`Block`] struct. Using registry IDs keeps the block array
+/// compact—two bytes per block instead of sixteen—providing roughly an
+/// eightfold memory reduction.
 struct SectionToModify {
-    blocks: [Block; 4096],
+    /// Registry `u16` block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
+    block_ids: [u16; 4096],
     // Store properties for blocks that have them, indexed by the same index as blocks array
     properties: FnvHashMap<usize, Value>,
 }
 
 impl SectionToModify {
     fn get_block(&self, x: u8, y: u8, z: u8) -> Option<Block> {
-        let b = self.blocks[Self::index(x, y, z)];
-        if b == AIR {
+        let id = self.block_ids[Self::index(x, y, z)];
+        if id == AIR_ID {
             return None;
         }
 
-        Some(b)
+        Some(block_registry::block(id))
     }
 
     fn set_block(&mut self, x: u8, y: u8, z: u8, block: Block) {
-        self.blocks[Self::index(x, y, z)] = block;
+        self.block_ids[Self::index(x, y, z)] = block_registry::id(block);
     }
 
     fn set_block_with_properties(
@@ -128,7 +136,7 @@ impl SectionToModify {
         block_with_props: BlockWithProperties,
     ) {
         let index = Self::index(x, y, z);
-        self.blocks[index] = block_with_props.block;
+        self.block_ids[index] = block_registry::id(block_with_props.block);
 
         // Store properties if they exist
         if let Some(props) = block_with_props.properties {
@@ -145,21 +153,22 @@ impl SectionToModify {
 
     fn to_section(&self, y: i8) -> Section {
         // Create a map of unique block+properties combinations to palette indices
-        let mut unique_blocks: Vec<(Block, Option<Value>)> = Vec::new();
-        let mut palette_lookup: FnvHashMap<(Block, Option<String>), usize> = FnvHashMap::default();
+        let mut unique_blocks: Vec<(u16, Block, Option<Value>)> = Vec::new();
+        let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> = FnvHashMap::default();
 
         // Build unique block combinations and lookup table
-        for (i, &block) in self.blocks.iter().enumerate() {
+        for (i, &block_id) in self.block_ids.iter().enumerate() {
             let properties = self.properties.get(&i).cloned();
 
             // Create a key for the lookup (block + properties hash)
             let props_key = properties.as_ref().map(|p| format!("{p:?}"));
-            let lookup_key = (block, props_key);
+            let lookup_key = (block_id, props_key);
 
             if let std::collections::hash_map::Entry::Vacant(e) = palette_lookup.entry(lookup_key) {
                 let palette_index = unique_blocks.len();
                 e.insert(palette_index);
-                unique_blocks.push((block, properties));
+                let block = block_registry::block(block_id);
+                unique_blocks.push((block_id, block, properties));
             }
         }
 
@@ -172,10 +181,10 @@ impl SectionToModify {
         let mut cur = 0;
         let mut cur_idx = 0;
 
-        for (i, &block) in self.blocks.iter().enumerate() {
+        for (i, &block_id) in self.block_ids.iter().enumerate() {
             let properties = self.properties.get(&i).cloned();
             let props_key = properties.as_ref().map(|p| format!("{p:?}"));
-            let lookup_key = (block, props_key);
+            let lookup_key = (block_id, props_key);
             let p = palette_lookup[&lookup_key] as i64;
 
             if cur_idx + bits_per_block > 64 {
@@ -194,7 +203,7 @@ impl SectionToModify {
 
         let palette = unique_blocks
             .iter()
-            .map(|(block, stored_props)| PaletteItem {
+            .map(|(_, block, stored_props)| PaletteItem {
                 name: block.name().to_string(),
                 properties: stored_props.clone().or_else(|| block.properties()),
             })
@@ -217,7 +226,7 @@ impl SectionToModify {
 impl Default for SectionToModify {
     fn default() -> Self {
         Self {
-            blocks: [AIR; 4096],
+            block_ids: [AIR_ID; 4096],
             properties: FnvHashMap::default(),
         }
     }
