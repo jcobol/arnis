@@ -4,7 +4,7 @@ use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::element_processing::*;
 use crate::ground::Ground;
-use crate::osm_parser::ProcessedElement;
+use crate::osm_parser::{ProcessedElement, ProcessedNode};
 use crate::progress::emit_gui_progress_update;
 use crate::world_editor::{format_sign_text, WorldEditor};
 use colored::Colorize;
@@ -41,6 +41,8 @@ pub fn generate_world(
     let mut current_progress_prcs: f64 = 25.0;
     let mut last_emitted_progress: f64 = current_progress_prcs;
 
+    let mut coastline_segments: Vec<Vec<ProcessedNode>> = Vec::new();
+
     for element in &elements {
         process_pb.inc(1);
         current_progress_prcs += progress_increment_prcs;
@@ -67,6 +69,17 @@ pub fn generate_world(
                     highways::generate_highways(&mut editor, element, args, &elements);
                 } else if way.tags.contains_key("landuse") {
                     landuse::generate_landuse(&mut editor, way, args);
+                } else if way.tags.contains_key("water")
+                    || way.tags.get("natural") == Some(&"water".to_string())
+                    || way.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || way.tags.get("water") == Some(&"lake".to_string())
+                    || way.tags.get("water") == Some(&"reservoir".to_string())
+                    || (way.tags.get("waterway") == Some(&"river".to_string())
+                        && way.tags.get("area") == Some(&"yes".to_string()))
+                {
+                    water_areas::generate_water_area_from_way(&mut editor, way);
+                } else if way.tags.get("natural") == Some(&"coastline".to_string()) {
+                    coastline_segments.push(way.nodes.clone());
                 } else if way.tags.contains_key("natural") {
                     natural::generate_natural(&mut editor, element, args);
                 } else if way.tags.contains_key("amenity") {
@@ -76,7 +89,7 @@ pub fn generate_world(
                 } else if way.tags.contains_key("barrier") {
                     barriers::generate_barriers(&mut editor, element);
                 } else if way.tags.contains_key("waterway") {
-                    waterways::generate_waterways(&mut editor, way);
+                    waterways::generate_waterways(&mut editor, way, args);
                 } else if way.tags.contains_key("bridge") {
                     //bridges::generate_bridges(&mut editor, way, ground_level); // TODO FIX
                 } else if way.tags.contains_key("railway") {
@@ -116,8 +129,17 @@ pub fn generate_world(
                     buildings::generate_building_from_relation(&mut editor, rel, args);
                 } else if rel.tags.contains_key("water")
                     || rel.tags.get("natural") == Some(&"water".to_string())
+                    || rel.tags.get("waterway") == Some(&"riverbank".to_string())
+                    || rel.tags.get("water") == Some(&"lake".to_string())
+                    || rel.tags.get("water") == Some(&"reservoir".to_string())
+                    || (rel.tags.get("waterway") == Some(&"river".to_string())
+                        && rel.tags.get("area") == Some(&"yes".to_string()))
                 {
                     water_areas::generate_water_areas(&mut editor, rel);
+                } else if rel.tags.get("natural") == Some(&"coastline".to_string()) {
+                    for member in &rel.members {
+                        coastline_segments.push(member.way.nodes.clone());
+                    }
                 } else if rel.tags.contains_key("natural") {
                     natural::generate_natural_from_relation(&mut editor, rel, args);
                 } else if rel.tags.contains_key("landuse") {
@@ -134,6 +156,8 @@ pub fn generate_world(
             }
         }
     }
+
+    water_areas::generate_coastlines(&mut editor, &coastline_segments);
 
     process_pb.finish();
 

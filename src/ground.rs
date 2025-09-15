@@ -62,6 +62,12 @@ impl Ground {
         coords.map(|c: XZPoint| self.level(c)).max()
     }
 
+    /// Returns the configured ground level regardless of elevation data
+    #[inline(always)]
+    pub fn ground_level(&self) -> i32 {
+        self.ground_level
+    }
+
     /// Converts game coordinates to elevation data coordinates
     #[inline(always)]
     fn get_data_coordinates(&self, coord: XZPoint, data: &ElevationData) -> (f64, f64) {
@@ -124,6 +130,21 @@ impl Ground {
 
         if let Err(e) = img.save(&filename) {
             eprintln!("Failed to save debug image: {e}");
+        }
+    }
+}
+
+#[cfg(test)]
+impl Ground {
+    pub fn from_heights(ground_level: i32, heights: Vec<Vec<i32>>) -> Self {
+        Self {
+            elevation_enabled: true,
+            ground_level,
+            elevation_data: Some(ElevationData {
+                width: heights.first().map(|r| r.len()).unwrap_or(0),
+                height: heights.len(),
+                heights,
+            }),
         }
     }
 }

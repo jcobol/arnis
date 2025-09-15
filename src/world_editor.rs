@@ -401,6 +401,12 @@ impl<'a> WorldEditor<'a> {
         self.ground.as_ref().map(|g| g.as_ref())
     }
 
+    /// Returns the default ground level configured for the world
+    #[inline(always)]
+    pub fn ground_level(&self) -> i32 {
+        self.ground.as_ref().map(|g| g.ground_level()).unwrap_or(0)
+    }
+
     /// Calculate the absolute Y position from a ground-relative offset
     #[inline(always)]
     pub fn get_absolute_y(&self, x: i32, y_offset: i32, z: i32) -> i32 {
@@ -450,6 +456,14 @@ impl<'a> WorldEditor<'a> {
     pub fn block_at(&self, x: i32, y: i32, z: i32) -> bool {
         let absolute_y = self.get_absolute_y(x, y, z);
         self.world.get_block(x, absolute_y, z).is_some()
+    }
+
+    #[cfg(test)]
+    pub fn get_block_absolute(&self, x: i32, y: i32, z: i32) -> Option<Block> {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return None;
+        }
+        self.world.get_block(x, y, z)
     }
 
     /// Places a sign at an absolute Y coordinate.
