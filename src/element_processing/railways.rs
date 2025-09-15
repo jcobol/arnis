@@ -60,7 +60,8 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                     next.map(|(x, _, z)| (x, z)),
                 );
 
-                if rail_counter % 8 == 7 && matches!(rail_block, RAIL_NORTH_SOUTH | RAIL_EAST_WEST)
+                if rail_counter % 8 == 7
+                    && (rail_block == RAIL_NORTH_SOUTH || rail_block == RAIL_EAST_WEST)
                 {
                     editor.set_block(REDSTONE_BLOCK, bx, 0, bz, None, None);
                     let powered_block = if rail_block == RAIL_NORTH_SOUTH {

@@ -1,4 +1,5 @@
 #[path = "../src/biome_definitions.rs"]
+#[allow(dead_code)]
 mod biome_definitions;
 #[path = "../src/biome_registry.rs"]
 mod biome_registry;

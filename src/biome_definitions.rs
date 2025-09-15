@@ -1,5 +1,8 @@
+#[cfg(test)]
 use once_cell::sync::Lazy;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
 #[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Debug)]
@@ -20,6 +23,8 @@ impl Biome {
         self.name
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn from_str(name: &str) -> Biome {
         let mut cache = BIOME_NAME_CACHE.lock().unwrap();
         if let Some(biome) = cache.get(name) {
@@ -33,6 +38,8 @@ impl Biome {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 static BIOME_NAME_CACHE: Lazy<Mutex<HashMap<String, Biome>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
