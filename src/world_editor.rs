@@ -101,8 +101,14 @@ struct PaletteItem {
     properties: Option<Value>,
 }
 
+/// Mutable representation of a 16×16×16 chunk section.
+///
+/// Each entry stores a `u16` identifier from the global block registry rather
+/// than a full [`Block`] struct. Using registry IDs keeps the block array
+/// compact—two bytes per block instead of sixteen—providing roughly an
+/// eightfold memory reduction.
 struct SectionToModify {
-    /// Block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
+    /// Registry `u16` block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
     block_ids: [u16; 4096],
     // Store properties for blocks that have them, indexed by the same index as blocks array
     properties: FnvHashMap<usize, Value>,
@@ -148,8 +154,7 @@ impl SectionToModify {
     fn to_section(&self, y: i8) -> Section {
         // Create a map of unique block+properties combinations to palette indices
         let mut unique_blocks: Vec<(u16, Block, Option<Value>)> = Vec::new();
-        let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> =
-            FnvHashMap::default();
+        let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> = FnvHashMap::default();
 
         // Build unique block combinations and lookup table
         for (i, &block_id) in self.block_ids.iter().enumerate() {

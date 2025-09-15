@@ -23,6 +23,14 @@ Additionally, you can customize various generation settings, such as world scale
 
 Full documentation is available in the [GitHub Wiki](https://github.com/louis-e/arnis/wiki/), covering topics such as technical explanations, FAQs, contribution guidelines and roadmaps.
 
+## 🧱 Block ID Registry
+
+Arnis maintains a central registry that assigns a compact `u16` identifier to
+every block type. World sections reference blocks by these numeric IDs instead
+of storing the full `Block` structures. Because a `Block` is 16 bytes while an
+ID is only two bytes, this reduces the memory needed for block storage by
+roughly 8×.
+
 ## :trophy: Open Source
 #### Key objectives of this project
 - **Modularity**: Ensure that all components (e.g., data fetching, processing, and world generation) are cleanly separated into distinct modules for better maintainability and scalability.
