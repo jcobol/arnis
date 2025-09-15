@@ -7,6 +7,10 @@ mod block_definitions;
 mod block_registry;
 #[path = "../../src/colors.rs"]
 mod colors;
+#[path = "../../src/biome_definitions.rs"]
+mod biome_definitions;
+#[path = "../../src/biome_registry.rs"]
+mod biome_registry;
 
 // Minimal stubs for modules referenced by world_editor.rs
 mod coordinate_system {
@@ -102,6 +106,7 @@ mod world_editor {
 
         // Block in chunk (0,0)
         editor.set_block_absolute(block_definitions::OAK_PLANKS, 1, 64, 1, None, None);
+        editor.set_biome_absolute(biome_definitions::DESERT, 1, 64, 1);
 
         // Block with properties in chunk (1,0)
         let mut sign_props = std::collections::HashMap::new();
@@ -159,6 +164,34 @@ mod world_editor {
         let item0 = &section0.block_states.palette[palette_idx0];
         assert_eq!(item0.name, "minecraft:oak_planks");
         assert!(item0.properties.is_none());
+
+        // Verify biome in chunk (0,0)
+        let biome_data0 = section0
+            .biomes
+            .data
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_inner();
+        let bits_per_biome0 = biome_data0.len() * 64 / 4096;
+        let maskb0 = (1u64 << bits_per_biome0) - 1;
+        let mut bindices0 = Vec::with_capacity(4096);
+        let mut biter0 = biome_data0.iter();
+        let mut bcur0 = *biter0.next().unwrap() as u64;
+        let mut bcur_idx0 = 0;
+        for _ in 0..4096 {
+            if bcur_idx0 + bits_per_biome0 > 64 {
+                bcur0 = *biter0.next().unwrap() as u64;
+                bcur_idx0 = 0;
+            }
+            let p = ((bcur0 >> bcur_idx0) & maskb0) as usize;
+            bcur_idx0 += bits_per_biome0;
+            bindices0.push(p);
+        }
+        let bidx0 = SectionToModify::index(1, 0, 1);
+        let bpalette_idx0 = bindices0[bidx0];
+        let biome0 = &section0.biomes.palette[bpalette_idx0];
+        assert_eq!(biome0, "minecraft:desert");
 
         // Verify block with properties in chunk (1,0)
         let chunk1_bytes = region.read_chunk(1, 0).unwrap().unwrap();

@@ -4,6 +4,10 @@ mod colors;
 mod block_definitions;
 #[path = "../../src/block_registry.rs"]
 mod block_registry;
+#[path = "../../src/biome_definitions.rs"]
+mod biome_definitions;
+#[path = "../../src/biome_registry.rs"]
+mod biome_registry;
 
 // Minimal stubs for modules referenced by world_editor.rs
 mod coordinate_system {
@@ -85,6 +89,24 @@ mod world_editor {
     fn default_initialization_fills_with_air() {
         let section = SectionToModify::default();
         assert!(section.block_ids.iter().all(|&id| id == block_registry::AIR_ID));
+    }
+
+    #[test]
+    fn set_biome_stores_id() {
+        let mut section = SectionToModify::default();
+        section.set_biome(1, 2, 3, biome_definitions::FOREST);
+        let idx = SectionToModify::index(1, 2, 3);
+        assert_eq!(
+            section.biome_ids[idx],
+            biome_registry::id(biome_definitions::FOREST)
+        );
+    }
+
+    #[test]
+    fn default_biomes_are_plains() {
+        let section = SectionToModify::default();
+        let plains_id = biome_registry::id(biome_definitions::PLAINS);
+        assert!(section.biome_ids.iter().all(|&id| id == plains_id));
     }
 }
 
