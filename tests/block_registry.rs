@@ -1,9 +1,9 @@
-#[path = "../src/colors.rs"]
-mod colors;
 #[path = "../src/block_definitions.rs"]
 mod block_definitions;
 #[path = "../src/block_registry.rs"]
 mod block_registry;
+#[path = "../src/colors.rs"]
+mod colors;
 
 use block_definitions::*;
 use block_registry::*;
