@@ -12,6 +12,79 @@ mod biome_definitions;
 #[path = "../../src/biome_registry.rs"]
 mod biome_registry;
 
+// Additional stubs and modules needed for biome and OSM element tests
+mod args {
+    use std::time::Duration;
+
+    #[derive(Default)]
+    pub struct Args {
+        pub timeout: Option<Duration>,
+    }
+}
+
+#[path = "../../src/biomes.rs"]
+mod biomes;
+
+mod element_processing {
+    pub mod tree {
+        use crate::world_editor::WorldEditor;
+
+        pub struct Tree;
+
+        impl Tree {
+            pub fn create(_editor: &mut WorldEditor, _pos: (i32, i32, i32)) {}
+        }
+    }
+}
+
+mod floodfill {
+    pub fn flood_fill_area(
+        polygon: &[(i32, i32)],
+        _timeout: Option<&std::time::Duration>,
+    ) -> Vec<(i32, i32)> {
+        polygon.to_vec()
+    }
+}
+
+mod osm_parser {
+    use std::collections::HashMap;
+
+    #[derive(Clone)]
+    pub struct ProcessedNode {
+        pub x: i32,
+        pub z: i32,
+    }
+
+    #[derive(Clone)]
+    pub struct ProcessedWay {
+        pub id: u64,
+        pub nodes: Vec<ProcessedNode>,
+        pub tags: HashMap<String, String>,
+    }
+
+    #[derive(Clone)]
+    pub enum ProcessedMemberRole {
+        Outer,
+        Inner,
+    }
+
+    #[derive(Clone)]
+    pub struct ProcessedMember {
+        pub role: ProcessedMemberRole,
+        pub way: ProcessedWay,
+    }
+
+    #[derive(Clone)]
+    pub struct ProcessedRelation {
+        pub id: u64,
+        pub tags: HashMap<String, String>,
+        pub members: Vec<ProcessedMember>,
+    }
+}
+
+#[path = "../../src/element_processing/landuse.rs"]
+mod landuse;
+
 // Minimal stubs for modules referenced by world_editor.rs
 mod coordinate_system {
     pub mod cartesian {
@@ -224,5 +297,102 @@ mod world_editor {
         let item1 = &section1.block_states.palette[palette_idx1];
         assert_eq!(item1.name, "minecraft:oak_sign");
         assert_eq!(item1.properties, Some(sign_props_value));
+    }
+
+    /// Creates a small world editor, sets a biome, saves and verifies the
+    /// biome palette in the chunk NBT.
+    #[test]
+    fn save_writes_biome_palette_only() {
+        use fastanvil::Region;
+        use std::fs::File;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("region")).unwrap();
+
+        let xzbbox = coordinate_system::cartesian::XZBBox;
+        let llbbox = coordinate_system::geographic::LLBBox;
+        let mut editor = WorldEditor::new(dir.path().to_path_buf(), &xzbbox, llbbox);
+
+        editor.set_biome_absolute(biome_definitions::FOREST, 1, 64, 1);
+        editor.save();
+
+        let region_path = dir.path().join("region").join("r.0.0.mca");
+        let mut region = Region::from_stream(File::open(region_path).unwrap()).unwrap();
+        let chunk_bytes = region.read_chunk(0, 0).unwrap().unwrap();
+        let chunk: Chunk = fastnbt::from_bytes(&chunk_bytes).unwrap();
+        let section = chunk.sections.iter().find(|s| s.y == 4).unwrap();
+        let biome_data = section.biomes.data.as_ref().unwrap().clone().into_inner();
+        let bits_per_biome = biome_data.len() * 64 / 4096;
+        let mask = (1u64 << bits_per_biome) - 1;
+        let mut indices = Vec::with_capacity(4096);
+        let mut iter = biome_data.iter();
+        let mut cur = *iter.next().unwrap() as u64;
+        let mut cur_idx = 0;
+        for _ in 0..4096 {
+            if cur_idx + bits_per_biome > 64 {
+                cur = *iter.next().unwrap() as u64;
+                cur_idx = 0;
+            }
+            let p = ((cur >> cur_idx) & mask) as usize;
+            cur_idx += bits_per_biome;
+            indices.push(p);
+        }
+        let idx = SectionToModify::index(1, 0, 1);
+        let palette_idx = indices[idx];
+        assert_eq!(section.biomes.palette[palette_idx], "minecraft:forest");
+    }
+
+    /// Ensures that an OSM-derived landuse element sets the biome correctly
+    /// through the WorldEditor.
+    #[test]
+    fn landuse_sets_biomes() {
+        use fastanvil::Region;
+        use std::collections::HashMap;
+        use std::fs::File;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("region")).unwrap();
+
+        let xzbbox = coordinate_system::cartesian::XZBBox;
+        let llbbox = coordinate_system::geographic::LLBBox;
+        let mut editor = WorldEditor::new(dir.path().to_path_buf(), &xzbbox, llbbox);
+
+        let mut tags = HashMap::new();
+        tags.insert("landuse".to_string(), "forest".to_string());
+        let way = super::osm_parser::ProcessedWay {
+            id: 1,
+            nodes: vec![super::osm_parser::ProcessedNode { x: 1, z: 1 }],
+            tags,
+        };
+        let args = super::args::Args::default();
+        super::landuse::generate_landuse(&mut editor, &way, &args);
+        editor.save();
+
+        let region_path = dir.path().join("region").join("r.0.0.mca");
+        let mut region = Region::from_stream(File::open(region_path).unwrap()).unwrap();
+        let chunk_bytes = region.read_chunk(0, 0).unwrap().unwrap();
+        let chunk: Chunk = fastnbt::from_bytes(&chunk_bytes).unwrap();
+        let section = chunk.sections.iter().find(|s| s.y == 0).unwrap();
+        let biome_data = section.biomes.data.as_ref().unwrap().clone().into_inner();
+        let bits_per_biome = biome_data.len() * 64 / 4096;
+        let mask = (1u64 << bits_per_biome) - 1;
+        let mut indices = Vec::with_capacity(4096);
+        let mut iter = biome_data.iter();
+        let mut cur = *iter.next().unwrap() as u64;
+        let mut cur_idx = 0;
+        for _ in 0..4096 {
+            if cur_idx + bits_per_biome > 64 {
+                cur = *iter.next().unwrap() as u64;
+                cur_idx = 0;
+            }
+            let p = ((cur >> cur_idx) & mask) as usize;
+            cur_idx += bits_per_biome;
+            indices.push(p);
+        }
+        let idx = SectionToModify::index(1, 0, 1);
+        let palette_idx = indices[idx];
+        assert_eq!(section.biomes.palette[palette_idx], "minecraft:forest");
     }
 }
