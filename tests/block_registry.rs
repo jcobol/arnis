@@ -3,6 +3,7 @@ mod block_definitions;
 #[path = "../src/block_registry.rs"]
 mod block_registry;
 #[path = "../src/colors.rs"]
+#[allow(dead_code)]
 mod colors;
 
 use block_definitions::*;

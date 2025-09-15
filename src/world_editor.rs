@@ -511,12 +511,6 @@ impl<'a> WorldEditor<'a> {
         self.ground.as_ref().map(|g| g.as_ref())
     }
 
-    /// Returns the default ground level configured for the world
-    #[inline(always)]
-    pub fn ground_level(&self) -> i32 {
-        self.ground.as_ref().map(|g| g.ground_level()).unwrap_or(0)
-    }
-
     /// Calculate the absolute Y position from a ground-relative offset
     #[inline(always)]
     pub fn get_absolute_y(&self, x: i32, y_offset: i32, z: i32) -> i32 {
