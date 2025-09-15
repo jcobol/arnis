@@ -1,0 +1,1435 @@
+diff --git a/src/biome_definitions.rs b/src/biome_definitions.rs
+new file mode 100644
+index 0000000..8fa117e
+--- /dev/null
++++ b/src/biome_definitions.rs
+@@ -0,0 +1,56 @@
++#[cfg(test)]
++use once_cell::sync::Lazy;
++#[cfg(test)]
++use std::collections::HashMap;
++#[cfg(test)]
++use std::sync::Mutex;
++
++#[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Debug)]
++pub struct Biome {
++    name: &'static str,
++}
++
++impl Biome {
++    #[inline(always)]
++    const fn new(namespaced_name: &'static str) -> Self {
++        Self {
++            name: namespaced_name,
++        }
++    }
++
++    #[inline(always)]
++    pub fn name(&self) -> &str {
++        self.name
++    }
++
++    #[cfg(test)]
++    #[allow(dead_code)]
++    pub fn from_str(name: &str) -> Biome {
++        let mut cache = BIOME_NAME_CACHE.lock().unwrap();
++        if let Some(biome) = cache.get(name) {
++            *biome
++        } else {
++            let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
++            let biome = Biome::new(leaked);
++            cache.insert(name.to_string(), biome);
++            biome
++        }
++    }
++}
++
++#[cfg(test)]
++#[allow(dead_code)]
++static BIOME_NAME_CACHE: Lazy<Mutex<HashMap<String, Biome>>> =
++    Lazy::new(|| Mutex::new(HashMap::new()));
++
++pub const PLAINS: Biome = Biome::new("minecraft:plains");
++pub const FOREST: Biome = Biome::new("minecraft:forest");
++pub const RIVER: Biome = Biome::new("minecraft:river");
++pub const BEACH: Biome = Biome::new("minecraft:beach");
++pub const DESERT: Biome = Biome::new("minecraft:desert");
++pub const OCEAN: Biome = Biome::new("minecraft:ocean");
++pub const JUNGLE: Biome = Biome::new("minecraft:jungle");
++pub const SWAMP: Biome = Biome::new("minecraft:swamp");
++pub const TAIGA: Biome = Biome::new("minecraft:taiga");
++pub const SAVANNA: Biome = Biome::new("minecraft:savanna");
++pub const MOUNTAINS: Biome = Biome::new("minecraft:mountains");
+diff --git a/src/biome_registry.rs b/src/biome_registry.rs
+new file mode 100644
+index 0000000..f637d39
+--- /dev/null
++++ b/src/biome_registry.rs
+@@ -0,0 +1,46 @@
++//! Maintains a bidirectional mapping between [`Biome`] values and compact
++//! `u16` identifiers used for referencing biomes.
++
++use fnv::FnvHashMap;
++use once_cell::sync::Lazy;
++use std::sync::Mutex;
++
++use crate::biome_definitions::Biome;
++use crate::biome_definitions::*;
++
++struct Registry {
++    biomes: Vec<Biome>,
++    ids: FnvHashMap<Biome, u16>,
++}
++
++static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
++    let biomes = vec![
++        PLAINS, FOREST, RIVER, BEACH, DESERT, OCEAN, JUNGLE, SWAMP, TAIGA, SAVANNA, MOUNTAINS,
++    ];
++    let mut ids = FnvHashMap::default();
++    for (id, biome) in biomes.iter().copied().enumerate() {
++        ids.insert(biome, id as u16);
++    }
++    Mutex::new(Registry { biomes, ids })
++});
++
++pub fn id(biome: Biome) -> u16 {
++    let mut registry = REGISTRY.lock().unwrap();
++    if let Some(&id) = registry.ids.get(&biome) {
++        id
++    } else {
++        let id = registry.biomes.len() as u16;
++        registry.biomes.push(biome);
++        registry.ids.insert(biome, id);
++        id
++    }
++}
++
++pub fn biome(id: u16) -> Biome {
++    let registry = REGISTRY.lock().unwrap();
++    registry
++        .biomes
++        .get(id as usize)
++        .copied()
++        .expect("biome id out of range")
++}
+diff --git a/src/biomes.rs b/src/biomes.rs
+new file mode 100644
+index 0000000..b19e33b
+--- /dev/null
++++ b/src/biomes.rs
+@@ -0,0 +1,25 @@
++use std::collections::HashMap;
++
++use crate::biome_definitions::{Biome, BEACH, FOREST, PLAINS, RIVER};
++
++/// Determines a biome based on OSM-style tag key-value pairs.
++///
++/// Currently supports a handful of common tags with a fallback to
++/// [`PLAINS`] when no specific biome mapping exists.
++pub fn biome_from_tags(tags: &HashMap<String, String>) -> Option<Biome> {
++    if let Some(value) = tags.get("landuse") {
++        if value == "forest" {
++            return Some(FOREST);
++        }
++    }
++
++    if let Some(value) = tags.get("natural") {
++        return match value.as_str() {
++            "water" => Some(RIVER),
++            "beach" => Some(BEACH),
++            _ => Some(PLAINS),
++        };
++    }
++
++    Some(PLAINS)
++}
+diff --git a/src/block_definitions.rs b/src/block_definitions.rs
+index 36a1f01..6e9f4ac 100644
+--- a/src/block_definitions.rs
++++ b/src/block_definitions.rs
+@@ -103,47 +103,102 @@ impl Block {
+     /// rotation and waterlogged state start from these defaults before
+     /// applying overrides.
+     pub fn properties(&self) -> Option<Value> {
+-        match self.name {
+-            "minecraft:birch_leaves" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("persistent".to_string(), Value::String("true".to_string()));
+-                map
+-            })),
+-            "minecraft:oak_leaves" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("persistent".to_string(), Value::String("true".to_string()));
+-                map
+-            })),
+-            "minecraft:carrots" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("age".to_string(), Value::String("7".to_string()));
+-                map
+-            })),
+-            "minecraft:potatoes" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("age".to_string(), Value::String("7".to_string()));
+-                map
+-            })),
+-            "minecraft:wheat" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("age".to_string(), Value::String("7".to_string()));
+-                map
+-            })),
+-            "minecraft:oak_sign" => Some(Value::Compound({
+-                let mut map: HashMap<String, Value> = HashMap::new();
+-                map.insert("rotation".to_string(), Value::String("6".to_string()));
+-                map.insert(
+-                    "waterlogged".to_string(),
+-                    Value::String("false".to_string()),
+-                );
+-                map
+-            })),
+-            "minecraft:oak_trapdoor" => Some(Value::Compound({
+-                let mut map = HashMap::new();
+-                map.insert("half".to_string(), Value::String("top".to_string()));
+-                map
+-            })),
+-            _ => None,
++        if std::ptr::eq(self, &POWERED_RAIL_NORTH_SOUTH) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("north_south".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL_EAST_WEST) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert("shape".to_string(), Value::String("east_west".to_string()));
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_EAST) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("ascending_east".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_WEST) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("ascending_west".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_NORTH) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("ascending_north".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_SOUTH) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("ascending_south".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else if std::ptr::eq(self, &POWERED_RAIL) {
++            let mut map: HashMap<String, Value> = HashMap::new();
++            map.insert("powered".to_string(), Value::String("true".to_string()));
++            map.insert(
++                "shape".to_string(),
++                Value::String("north_south".to_string()),
++            );
++            Some(Value::Compound(map))
++        } else {
++            match self.name {
++                "minecraft:birch_leaves" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("persistent".to_string(), Value::String("true".to_string()));
++                    map
++                })),
++                "minecraft:oak_leaves" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("persistent".to_string(), Value::String("true".to_string()));
++                    map
++                })),
++                "minecraft:carrots" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("age".to_string(), Value::String("7".to_string()));
++                    map
++                })),
++                "minecraft:potatoes" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("age".to_string(), Value::String("7".to_string()));
++                    map
++                })),
++                "minecraft:wheat" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("age".to_string(), Value::String("7".to_string()));
++                    map
++                })),
++                "minecraft:oak_sign" => Some(Value::Compound({
++                    let mut map: HashMap<String, Value> = HashMap::new();
++                    map.insert("rotation".to_string(), Value::String("6".to_string()));
++                    map.insert(
++                        "waterlogged".to_string(),
++                        Value::String("false".to_string()),
++                    );
++                    map
++                })),
++                "minecraft:oak_trapdoor" => Some(Value::Compound({
++                    let mut map = HashMap::new();
++                    map.insert("half".to_string(), Value::String("top".to_string()));
++                    map
++                })),
++                _ => None,
++            }
+         }
+     }
+ }
+@@ -280,6 +335,7 @@ pub const POLISHED_BLACKSTONE: Block = Block::new("minecraft:polished_blackstone
+ pub const POLISHED_DEEPSLATE: Block = Block::new("minecraft:polished_deepslate");
+ pub const POLISHED_DIORITE: Block = Block::new("minecraft:polished_diorite");
+ pub const POLISHED_GRANITE: Block = Block::new("minecraft:polished_granite");
++pub const POWERED_RAIL: Block = Block::new("minecraft:powered_rail");
+ pub const PRISMARINE: Block = Block::new("minecraft:prismarine");
+ pub const PURPUR_BLOCK: Block = Block::new("minecraft:purpur_block");
+ pub const PURPUR_PILLAR: Block = Block::new("minecraft:purpur_pillar");
+@@ -287,6 +343,7 @@ pub const QUARTZ_BRICKS: Block = Block::new("minecraft:quartz_bricks");
+ pub const RAIL: Block = Block::new("minecraft:rail");
+ pub const RED_FLOWER: Block = Block::new("minecraft:poppy");
+ pub const RED_NETHER_BRICK: Block = Block::new("minecraft:red_nether_bricks");
++pub const REDSTONE_BLOCK: Block = Block::new("minecraft:redstone_block");
+ pub const RED_TERRACOTTA: Block = Block::new("minecraft:red_terracotta");
+ pub const RED_WOOL: Block = Block::new("minecraft:red_wool");
+ pub const SAND: Block = Block::new("minecraft:sand");
+@@ -334,6 +391,12 @@ pub const DARK_OAK_DOOR_UPPER: Block = Block::new("minecraft:dark_oak_door");
+ pub const POTATOES: Block = Block::new("minecraft:potatoes");
+ pub const WHEAT: Block = Block::new("minecraft:wheat");
+ pub const BEDROCK: Block = Block::new("minecraft:bedrock");
++pub const POWERED_RAIL_NORTH_SOUTH: Block = Block::new("minecraft:powered_rail");
++pub const POWERED_RAIL_EAST_WEST: Block = Block::new("minecraft:powered_rail");
++pub const POWERED_RAIL_ASCENDING_EAST: Block = Block::new("minecraft:powered_rail");
++pub const POWERED_RAIL_ASCENDING_WEST: Block = Block::new("minecraft:powered_rail");
++pub const POWERED_RAIL_ASCENDING_NORTH: Block = Block::new("minecraft:powered_rail");
++pub const POWERED_RAIL_ASCENDING_SOUTH: Block = Block::new("minecraft:powered_rail");
+ pub const RAIL_NORTH_SOUTH: Block = Block::new("minecraft:rail");
+ pub const RAIL_EAST_WEST: Block = Block::new("minecraft:rail");
+ pub const RAIL_ASCENDING_EAST: Block = Block::new("minecraft:rail");
+diff --git a/src/block_registry.rs b/src/block_registry.rs
+index 97b580b..de2bdee 100644
+--- a/src/block_registry.rs
++++ b/src/block_registry.rs
+@@ -85,6 +85,7 @@ static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
+         POLISHED_DEEPSLATE,
+         POLISHED_DIORITE,
+         POLISHED_GRANITE,
++        POWERED_RAIL,
+         PRISMARINE,
+         PURPUR_BLOCK,
+         PURPUR_PILLAR,
+@@ -92,6 +93,7 @@ static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
+         RAIL,
+         RED_FLOWER,
+         RED_NETHER_BRICK,
++        REDSTONE_BLOCK,
+         RED_TERRACOTTA,
+         RED_WOOL,
+         SAND,
+@@ -139,6 +141,12 @@ static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
+         POTATOES,
+         WHEAT,
+         BEDROCK,
++        POWERED_RAIL_NORTH_SOUTH,
++        POWERED_RAIL_EAST_WEST,
++        POWERED_RAIL_ASCENDING_EAST,
++        POWERED_RAIL_ASCENDING_WEST,
++        POWERED_RAIL_ASCENDING_NORTH,
++        POWERED_RAIL_ASCENDING_SOUTH,
+         RAIL_NORTH_SOUTH,
+         RAIL_EAST_WEST,
+         RAIL_ASCENDING_EAST,
+diff --git a/src/element_processing/landuse.rs b/src/element_processing/landuse.rs
+index e03aa45..df3e3ad 100644
+--- a/src/element_processing/landuse.rs
++++ b/src/element_processing/landuse.rs
+@@ -1,4 +1,5 @@
+ use crate::args::Args;
++use crate::biomes::biome_from_tags;
+ use crate::block_definitions::*;
+ use crate::element_processing::tree::Tree;
+ use crate::floodfill::flood_fill_area;
+@@ -11,6 +12,8 @@ pub fn generate_landuse(editor: &mut WorldEditor, element: &ProcessedWay, args:
+     let binding: String = "".to_string();
+     let landuse_tag: &String = element.tags.get("landuse").unwrap_or(&binding);
+ 
++    let biome = biome_from_tags(&element.tags);
++
+     let block_type = match landuse_tag.as_str() {
+         "greenfield" | "meadow" | "grass" | "orchard" | "forest" => GRASS_BLOCK,
+         "farmland" => FARMLAND,
+@@ -51,6 +54,10 @@ pub fn generate_landuse(editor: &mut WorldEditor, element: &ProcessedWay, args:
+     let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
+ 
+     for (x, z) in floor_area {
++        if let Some(b) = biome {
++            editor.set_biome(b, x, 0, z);
++        }
++
+         if landuse_tag == "traffic_island" {
+             editor.set_block(block_type, x, 1, z, None, None);
+         } else if landuse_tag == "construction" || landuse_tag == "railway" {
+diff --git a/src/element_processing/natural.rs b/src/element_processing/natural.rs
+index 6752e68..c7fe6c4 100644
+--- a/src/element_processing/natural.rs
++++ b/src/element_processing/natural.rs
+@@ -1,4 +1,5 @@
+ use crate::args::Args;
++use crate::biomes::biome_from_tags;
+ use crate::block_definitions::*;
+ use crate::bresenham::bresenham_line;
+ use crate::element_processing::tree::Tree;
+@@ -9,6 +10,7 @@ use rand::Rng;
+ 
+ pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
+     if let Some(natural_type) = element.tags().get("natural") {
++        let biome = biome_from_tags(element.tags());
+         if natural_type == "tree" {
+             if let ProcessedElement::Node(node) = element {
+                 let x: i32 = node.x;
+@@ -59,6 +61,9 @@ pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, ar
+                     let bresenham_points: Vec<(i32, i32, i32)> =
+                         bresenham_line(prev.0, 0, prev.1, x, 0, z);
+                     for (bx, _, bz) in bresenham_points {
++                        if let Some(b) = biome {
++                            editor.set_biome(b, bx, 0, bz);
++                        }
+                         editor.set_block(block_type, bx, 0, bz, None, None);
+                     }
+ 
+@@ -82,6 +87,9 @@ pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, ar
+                 let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
+ 
+                 for (x, z) in filled_area {
++                    if let Some(b) = biome {
++                        editor.set_biome(b, x, 0, z);
++                    }
+                     editor.set_block(block_type, x, 0, z, None, None);
+                     // Generate custom layer instead of dirt, must be stone on the lowest level
+                     match natural_type.as_str() {
+diff --git a/src/element_processing/railways.rs b/src/element_processing/railways.rs
+index eb27362..21d23e0 100644
+--- a/src/element_processing/railways.rs
++++ b/src/element_processing/railways.rs
+@@ -36,6 +36,7 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
+ 
+             let points = bresenham_line(prev_node.x, 0, prev_node.z, cur_node.x, 0, cur_node.z);
+             let smoothed_points = smooth_diagonal_rails(&points);
++            let mut rail_counter = 0;
+ 
+             for j in 0..smoothed_points.len() {
+                 let (bx, _, bz) = smoothed_points[j];
+@@ -59,11 +60,24 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
+                     next.map(|(x, _, z)| (x, z)),
+                 );
+ 
+-                editor.set_block(rail_block, bx, 1, bz, None, None);
+-
+-                if bx % 4 == 0 {
+-                    editor.set_block(OAK_LOG, bx, 0, bz, None, None);
++                if rail_counter % 8 == 7
++                    && (rail_block == RAIL_NORTH_SOUTH || rail_block == RAIL_EAST_WEST)
++                {
++                    editor.set_block(REDSTONE_BLOCK, bx, 0, bz, None, None);
++                    let powered_block = if rail_block == RAIL_NORTH_SOUTH {
++                        POWERED_RAIL_NORTH_SOUTH
++                    } else {
++                        POWERED_RAIL_EAST_WEST
++                    };
++                    editor.set_block(powered_block, bx, 1, bz, None, None);
++                } else {
++                    editor.set_block(rail_block, bx, 1, bz, None, None);
++                    if rail_counter % 4 == 0 {
++                        editor.set_block(OAK_LOG, bx, 0, bz, None, None);
++                    }
+                 }
++
++                rail_counter += 1;
+             }
+         }
+     }
+diff --git a/src/element_processing/water_areas.rs b/src/element_processing/water_areas.rs
+index a5e7d86..79ad5d0 100644
+--- a/src/element_processing/water_areas.rs
++++ b/src/element_processing/water_areas.rs
+@@ -7,6 +7,8 @@ use std::time::Instant;
+ use crate::bresenham::bresenham_line;
+ 
+ use crate::{
++    biome_definitions::{self, Biome},
++    biomes::biome_from_tags,
+     block_definitions::WATER,
+     coordinate_system::cartesian::XZPoint,
+     osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay},
+@@ -22,6 +24,8 @@ fn generate_water_areas_internal(
+ ) {
+     let start_time = Instant::now();
+ 
++    let biome = biome_from_tags(&element.tags).unwrap_or(biome_definitions::PLAINS);
++
+     if !fill_outside {
+         let is_water = element.tags.contains_key("water")
+             || element.tags.get("natural") == Some(&"water".to_string())
+@@ -68,7 +72,7 @@ fn generate_water_areas_internal(
+         } else {
+             0
+         };
+-        fill_from_barriers(editor, &all_lines, false, water_level);
++        fill_from_barriers(editor, &all_lines, false, water_level, biome);
+         return;
+     }
+ 
+@@ -92,7 +96,7 @@ fn generate_water_areas_internal(
+             } else {
+                 0
+             };
+-            fill_from_barriers(editor, &all_lines, false, water_level);
++            fill_from_barriers(editor, &all_lines, false, water_level, biome);
+             return;
+         }
+ 
+@@ -108,7 +112,7 @@ fn generate_water_areas_internal(
+             } else {
+                 0
+             };
+-            fill_from_barriers(editor, &all_lines, false, water_level);
++            fill_from_barriers(editor, &all_lines, false, water_level, biome);
+             return;
+         }
+ 
+@@ -192,6 +196,7 @@ fn generate_water_areas_internal(
+             editor,
+             start_time,
+             fill_outside,
++            biome,
+         );
+     }
+ }
+@@ -207,6 +212,8 @@ fn generate_water_area_from_way_internal(
+ ) {
+     let start_time = Instant::now();
+ 
++    let biome = biome_from_tags(&way.tags).unwrap_or(biome_definitions::PLAINS);
++
+     if !fill_outside {
+         let is_water = way.tags.contains_key("water")
+             || way.tags.get("natural") == Some(&"water".to_string())
+@@ -240,7 +247,13 @@ fn generate_water_area_from_way_internal(
+         } else {
+             0
+         };
+-        fill_from_barriers(editor, &[way.nodes.clone()], fill_outside, water_level);
++        fill_from_barriers(
++            editor,
++            &[way.nodes.clone()],
++            fill_outside,
++            water_level,
++            biome,
++        );
+         return;
+     }
+ 
+@@ -273,6 +286,7 @@ fn generate_water_area_from_way_internal(
+         editor,
+         start_time,
+         fill_outside,
++        biome,
+     );
+ }
+ 
+@@ -457,6 +471,7 @@ fn fill_from_barriers(
+     lines: &[Vec<ProcessedNode>],
+     fill_outside: bool,
+     water_level: i32,
++    biome: Biome,
+ ) {
+     let (min_x, min_z) = editor.get_min_coords();
+     let (max_x, max_z) = editor.get_max_coords();
+@@ -531,6 +546,7 @@ fn fill_from_barriers(
+                         });
+                         for y in water_level..=terrain {
+                             editor.set_block_absolute(WATER, world_x, y, world_z, None, Some(&[]));
++                            editor.set_biome_absolute(biome, world_x, y, world_z);
+                         }
+                     } else {
+                         editor.set_block_absolute(
+@@ -541,6 +557,7 @@ fn fill_from_barriers(
+                             None,
+                             Some(&[]),
+                         );
++                        editor.set_biome_absolute(biome, world_x, water_level, world_z);
+                     }
+                 } else {
+                     editor.set_block_absolute(
+@@ -551,6 +568,7 @@ fn fill_from_barriers(
+                         None,
+                         Some(&[]),
+                     );
++                    editor.set_biome_absolute(biome, world_x, water_level, world_z);
+                 }
+             }
+         }
+@@ -571,7 +589,7 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
+     } else {
+         0
+     };
+-    fill_from_barriers(editor, ways, true, level);
++    fill_from_barriers(editor, ways, true, level, biome_definitions::OCEAN);
+ }
+ 
+ // Merges ways that share nodes into full loops
+@@ -681,6 +699,7 @@ fn inverse_floodfill(
+     editor: &mut WorldEditor,
+     start_time: Instant,
+     fill_outside: bool,
++    biome: Biome,
+ ) {
+     let inners: Vec<_> = inners
+         .into_iter()
+@@ -719,6 +738,7 @@ fn inverse_floodfill(
+         editor,
+         start_time,
+         fill_outside,
++        biome,
+     );
+ }
+ 
+@@ -731,11 +751,21 @@ fn inverse_floodfill_recursive(
+     editor: &mut WorldEditor,
+     start_time: Instant,
+     fill_outside: bool,
++    biome: Biome,
+ ) {
+     // Check if we've exceeded 25 seconds
+     if start_time.elapsed().as_secs() > 25 {
+         // Fall back: brute-force fill for the remaining region so we never leave it empty.
+-        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
++        inverse_floodfill_iterative(
++            min,
++            max,
++            water_level,
++            outers,
++            inners,
++            editor,
++            fill_outside,
++            biome,
++        );
+         return;
+     }
+ 
+@@ -748,7 +778,16 @@ fn inverse_floodfill_recursive(
+     // Multiply as i64 to avoid overflow; in release builds where unchecked math is
+     // enabled, this could cause the rest of this code to end up in an infinite loop.
+     if ((max.0 - min.0) as i64) * ((max.1 - min.1) as i64) < ITERATIVE_THRES {
+-        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
++        inverse_floodfill_iterative(
++            min,
++            max,
++            water_level,
++            outers,
++            inners,
++            editor,
++            fill_outside,
++            biome,
++        );
+         return;
+     }
+ 
+@@ -787,7 +826,7 @@ fn inverse_floodfill_recursive(
+                 && outers_intersects.is_empty()
+                 && inners_intersects.is_empty())
+         {
+-            rect_fill(min_x, max_x, min_z, max_z, water_level, editor);
++            rect_fill(min_x, max_x, min_z, max_z, water_level, editor, biome);
+             continue;
+         }
+ 
+@@ -801,6 +840,7 @@ fn inverse_floodfill_recursive(
+                 editor,
+                 start_time,
+                 fill_outside,
++                biome,
+             );
+         }
+     }
+@@ -815,6 +855,7 @@ fn inverse_floodfill_iterative(
+     inners: &[Polygon],
+     editor: &mut WorldEditor,
+     fill_outside: bool,
++    biome: Biome,
+ ) {
+     let ground = editor.get_ground().cloned();
+     let (min_x, min_z) = editor.get_min_coords();
+@@ -841,12 +882,15 @@ fn inverse_floodfill_iterative(
+                         });
+                         for y in water_level..=terrain {
+                             editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
++                            editor.set_biome_absolute(biome, x, y, z);
+                         }
+                     } else {
+                         editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
++                        editor.set_biome_absolute(biome, x, water_level, z);
+                     }
+                 } else {
+                     editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
++                    editor.set_biome_absolute(biome, x, water_level, z);
+                 }
+             }
+         }
+@@ -860,6 +904,7 @@ fn rect_fill(
+     max_z: i32,
+     water_level: i32,
+     editor: &mut WorldEditor,
++    biome: Biome,
+ ) {
+     let ground = editor.get_ground().cloned();
+     let (min_x_world, min_z_world) = editor.get_min_coords();
+@@ -876,12 +921,15 @@ fn rect_fill(
+                     });
+                     for y in water_level..=terrain {
+                         editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
++                        editor.set_biome_absolute(biome, x, y, z);
+                     }
+                 } else {
+                     editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
++                    editor.set_biome_absolute(biome, x, water_level, z);
+                 }
+             } else {
+                 editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
++                editor.set_biome_absolute(biome, x, water_level, z);
+             }
+         }
+     }
+diff --git a/src/main.rs b/src/main.rs
+index 2ac97f2..d355a01 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,6 +1,9 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
+ mod args;
++mod biome_definitions;
++mod biome_registry;
++mod biomes;
+ mod block_definitions;
+ mod block_registry;
+ mod bresenham;
+diff --git a/src/world_editor.rs b/src/world_editor.rs
+index fbf9405..8fa4239 100644
+--- a/src/world_editor.rs
++++ b/src/world_editor.rs
+@@ -1,5 +1,7 @@
+ use crate::block_definitions::*;
+ use crate::block_registry::{self, AIR_ID};
++use crate::biome_definitions::{self, Biome};
++use crate::biome_registry;
+ use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
+ use crate::coordinate_system::geographic::LLBBox;
+ use crate::ground::Ground;
+@@ -75,6 +77,8 @@ struct Chunk {
+ #[derive(Serialize, Deserialize)]
+ struct Section {
+     block_states: Blockstates,
++    #[serde(default)]
++    biomes: Biomes,
+     #[serde(rename = "Y")]
+     y: i8,
+     #[serde(default)]
+@@ -93,6 +97,24 @@ struct Blockstates {
+     other: FnvHashMap<String, Value>,
+ }
+ 
++#[derive(Serialize, Deserialize)]
++struct Biomes {
++    palette: Vec<String>,
++    data: Option<LongArray>,
++    #[serde(flatten)]
++    other: FnvHashMap<String, Value>,
++}
++
++impl Default for Biomes {
++    fn default() -> Self {
++        Self {
++            palette: vec![biome_definitions::PLAINS.name().to_string()],
++            data: None,
++            other: FnvHashMap::default(),
++        }
++    }
++}
++
+ #[derive(Serialize, Deserialize)]
+ struct PaletteItem {
+     #[serde(rename = "Name")]
+@@ -110,6 +132,8 @@ struct PaletteItem {
+ struct SectionToModify {
+     /// Registry `u16` block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
+     block_ids: [u16; 4096],
++    /// Registry `u16` biome IDs for each block in the section.
++    biome_ids: [u16; 4096],
+     // Store properties for blocks that have them, indexed by the same index as blocks array
+     properties: FnvHashMap<usize, Value>,
+ }
+@@ -128,6 +152,10 @@ impl SectionToModify {
+         self.block_ids[Self::index(x, y, z)] = block_registry::id(block);
+     }
+ 
++    fn set_biome(&mut self, x: u8, y: u8, z: u8, biome: Biome) {
++        self.biome_ids[Self::index(x, y, z)] = biome_registry::id(biome);
++    }
++
+     fn set_block_with_properties(
+         &mut self,
+         x: u8,
+@@ -152,15 +180,12 @@ impl SectionToModify {
+     }
+ 
+     fn to_section(&self, y: i8) -> Section {
+-        // Create a map of unique block+properties combinations to palette indices
++        // ----- Block palette -----
+         let mut unique_blocks: Vec<(u16, Block, Option<Value>)> = Vec::new();
+         let mut palette_lookup: FnvHashMap<(u16, Option<String>), usize> = FnvHashMap::default();
+ 
+-        // Build unique block combinations and lookup table
+         for (i, &block_id) in self.block_ids.iter().enumerate() {
+             let properties = self.properties.get(&i).cloned();
+-
+-            // Create a key for the lookup (block + properties hash)
+             let props_key = properties.as_ref().map(|p| format!("{p:?}"));
+             let lookup_key = (block_id, props_key);
+ 
+@@ -209,12 +234,61 @@ impl SectionToModify {
+             })
+             .collect();
+ 
++        // ----- Biome palette -----
++        let mut unique_biomes: Vec<(u16, Biome)> = Vec::new();
++        let mut biome_lookup: FnvHashMap<u16, usize> = FnvHashMap::default();
++
++        for &biome_id in self.biome_ids.iter() {
++            if let std::collections::hash_map::Entry::Vacant(e) = biome_lookup.entry(biome_id) {
++                let palette_index = unique_biomes.len();
++                e.insert(palette_index);
++                let biome = biome_registry::biome(biome_id);
++                unique_biomes.push((biome_id, biome));
++            }
++        }
++
++        let mut bits_per_biome = 1; // minimum allowed
++        while (1 << bits_per_biome) < unique_biomes.len() {
++            bits_per_biome += 1;
++        }
++
++        let mut biome_data = vec![];
++        let mut cur_biome = 0i64;
++        let mut cur_biome_idx = 0;
++
++        for &biome_id in self.biome_ids.iter() {
++            let p = biome_lookup[&biome_id] as i64;
++
++            if cur_biome_idx + bits_per_biome > 64 {
++                biome_data.push(cur_biome);
++                cur_biome = 0;
++                cur_biome_idx = 0;
++            }
++
++            cur_biome |= p << cur_biome_idx;
++            cur_biome_idx += bits_per_biome;
++        }
++
++        if cur_biome_idx > 0 {
++            biome_data.push(cur_biome);
++        }
++
++        let biome_palette = unique_biomes
++            .iter()
++            .map(|(_, biome)| biome.name().to_string())
++            .collect();
++
+         Section {
+             block_states: Blockstates {
+                 palette,
+                 data: Some(LongArray::new(data)),
+                 other: FnvHashMap::default(),
+             },
++            biomes: Biomes {
++                palette: biome_palette,
++                data: Some(LongArray::new(biome_data)),
++                other: FnvHashMap::default(),
++            },
+             y,
+             sky_light: None,
+             block_light: None,
+@@ -225,8 +299,10 @@ impl SectionToModify {
+ 
+ impl Default for SectionToModify {
+     fn default() -> Self {
++        let plains_id = biome_registry::id(biome_definitions::PLAINS);
+         Self {
+             block_ids: [AIR_ID; 4096],
++            biome_ids: [plains_id; 4096],
+             properties: FnvHashMap::default(),
+         }
+     }
+@@ -269,6 +345,14 @@ impl ChunkToModify {
+         section.set_block_with_properties(x, (y & 15).try_into().unwrap(), z, block_with_props);
+     }
+ 
++    fn set_biome(&mut self, x: u8, y: i32, z: u8, biome: Biome) {
++        let section_idx: i8 = (y >> 4).try_into().unwrap();
++
++        let section = self.sections.entry(section_idx).or_default();
++
++        section.set_biome(x, (y & 15).try_into().unwrap(), z, biome);
++    }
++
+     fn sections(&self) -> impl Iterator<Item = Section> + '_ {
+         self.sections.iter().map(|(y, s)| s.to_section(*y))
+     }
+@@ -358,6 +442,23 @@ impl WorldToModify {
+             block_with_props,
+         );
+     }
++
++    fn set_biome(&mut self, x: i32, y: i32, z: i32, biome: Biome) {
++        let chunk_x: i32 = x >> 4;
++        let chunk_z: i32 = z >> 4;
++        let region_x: i32 = chunk_x >> 5;
++        let region_z: i32 = chunk_z >> 5;
++
++        let region: &mut RegionToModify = self.get_or_create_region(region_x, region_z);
++        let chunk: &mut ChunkToModify = region.get_or_create_chunk(chunk_x & 31, chunk_z & 31);
++
++        chunk.set_biome(
++            (x & 15).try_into().unwrap(),
++            y,
++            (z & 15).try_into().unwrap(),
++            biome,
++        );
++    }
+ }
+ 
+ #[derive(Serialize)]
+@@ -410,12 +511,6 @@ impl<'a> WorldEditor<'a> {
+         self.ground.as_ref().map(|g| g.as_ref())
+     }
+ 
+-    /// Returns the default ground level configured for the world
+-    #[inline(always)]
+-    pub fn ground_level(&self) -> i32 {
+-        self.ground.as_ref().map(|g| g.ground_level()).unwrap_or(0)
+-    }
+-
+     /// Calculate the absolute Y position from a ground-relative offset
+     #[inline(always)]
+     pub fn get_absolute_y(&self, x: i32, y_offset: i32, z: i32) -> i32 {
+@@ -669,6 +764,25 @@ impl<'a> WorldEditor<'a> {
+         }
+     }
+ 
++    /// Sets the biome at the given coordinates.
++    #[inline]
++    pub fn set_biome(&mut self, biome: Biome, x: i32, y: i32, z: i32) {
++        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
++            return;
++        }
++        let absolute_y = self.get_absolute_y(x, y, z);
++        self.world.set_biome(x, absolute_y, z, biome);
++    }
++
++    /// Sets the biome at the given coordinates using an absolute Y value.
++    #[inline]
++    pub fn set_biome_absolute(&mut self, biome: Biome, x: i32, absolute_y: i32, z: i32) {
++        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
++            return;
++        }
++        self.world.set_biome(x, absolute_y, z, biome);
++    }
++
+     /// Fills a cuboid area with the specified block between two coordinates.
+     #[allow(clippy::too_many_arguments)]
+     #[inline]
+@@ -855,6 +969,32 @@ impl<'a> WorldEditor<'a> {
+                                 ),
+                             ])),
+                         ),
++                        (
++                            "biomes".to_string(),
++                            Value::Compound(HashMap::from([
++                                (
++                                    "palette".to_string(),
++                                    Value::List(
++                                        section
++                                            .biomes
++                                            .palette
++                                            .iter()
++                                            .map(|name| Value::String(name.clone()))
++                                            .collect(),
++                                    ),
++                                ),
++                                (
++                                    "data".to_string(),
++                                    Value::LongArray(
++                                        section
++                                            .biomes
++                                            .data
++                                            .clone()
++                                            .unwrap_or_else(|| LongArray::new(vec![])),
++                                    ),
++                                ),
++                            ])),
++                        ),
+                     ]);
+                     if let Some(bl) = &section.block_light {
+                         map.insert("block_light".to_string(), Value::ByteArray(bl.clone()));
+@@ -952,6 +1092,9 @@ impl<'a> WorldEditor<'a> {
+                             for palette_item in &mut section.block_states.palette {
+                                 palette_item.name = canonicalize_name(&palette_item.name);
+                             }
++                            for biome_name in &mut section.biomes.palette {
++                                *biome_name = canonicalize_name(biome_name);
++                            }
+                             section.sky_light = None;
+                             section.block_light = None;
+                         }
+@@ -966,6 +1109,8 @@ impl<'a> WorldEditor<'a> {
+                                 existing_section.block_states.palette =
+                                     new_section.block_states.palette;
+                                 existing_section.block_states.data = new_section.block_states.data;
++                                existing_section.biomes.palette = new_section.biomes.palette;
++                                existing_section.biomes.data = new_section.biomes.data;
+                                 existing_section.sky_light = new_section.sky_light;
+                                 existing_section.block_light = new_section.block_light;
+                             } else {
+@@ -1162,6 +1307,32 @@ fn create_level_wrapper(chunk: &Chunk) -> HashMap<String, Value> {
+                             ),
+                         ])),
+                     ),
++                    (
++                        "biomes".to_string(),
++                        Value::Compound(HashMap::from([
++                            (
++                                "palette".to_string(),
++                                Value::List(
++                                    section
++                                        .biomes
++                                        .palette
++                                        .iter()
++                                        .map(|name| Value::String(name.clone()))
++                                        .collect(),
++                                ),
++                            ),
++                            (
++                                "data".to_string(),
++                                Value::LongArray(
++                                    section
++                                        .biomes
++                                        .data
++                                        .clone()
++                                        .unwrap_or_else(|| LongArray::new(vec![])),
++                                ),
++                            ),
++                        ])),
++                    ),
+                 ]);
+                 if let Some(bl) = &section.block_light {
+                     map.insert("block_light".to_string(), Value::ByteArray(bl.clone()));
+diff --git a/tests/biome_registry.rs b/tests/biome_registry.rs
+new file mode 100644
+index 0000000..c7bc6d5
+--- /dev/null
++++ b/tests/biome_registry.rs
+@@ -0,0 +1,33 @@
++#[path = "../src/biome_definitions.rs"]
++#[allow(dead_code)]
++mod biome_definitions;
++#[path = "../src/biome_registry.rs"]
++mod biome_registry;
++
++use biome_definitions::*;
++use biome_registry::*;
++
++#[test]
++fn known_biomes_have_stable_ids() {
++    assert_eq!(id(PLAINS), 0);
++    assert_eq!(id(FOREST), 1);
++    assert_eq!(id(RIVER), 2);
++}
++
++#[test]
++fn id_inserts_once_and_is_consistent() {
++    let custom_name = "minecraft:__biome_registry_test";
++    let first_id = id(Biome::from_str(custom_name));
++    let second_id = id(Biome::from_str(custom_name));
++    assert_eq!(first_id, second_id);
++
++    let other_id = id(Biome::from_str("minecraft:__biome_registry_other_test"));
++    assert_eq!(other_id, first_id + 1);
++}
++
++#[test]
++fn biome_returns_original() {
++    let custom = Biome::from_str("minecraft:__biome_registry_biome_test");
++    let id = id(custom);
++    assert_eq!(biome(id), custom);
++}
+diff --git a/tests/block_registry.rs b/tests/block_registry.rs
+index 80404b0..a921e25 100644
+--- a/tests/block_registry.rs
++++ b/tests/block_registry.rs
+@@ -3,6 +3,7 @@ mod block_definitions;
+ #[path = "../src/block_registry.rs"]
+ mod block_registry;
+ #[path = "../src/colors.rs"]
++#[allow(dead_code)]
+ mod colors;
+ 
+ use block_definitions::*;
+@@ -11,8 +12,8 @@ use block_registry::*;
+ #[test]
+ fn known_blocks_have_stable_ids() {
+     assert_eq!(id(AIR), AIR_ID);
+-    assert_eq!(id(STONE), 84);
+-    assert_eq!(id(WATER), 87);
++    assert_eq!(id(STONE), 86);
++    assert_eq!(id(WATER), 89);
+ }
+ 
+ #[test]
+diff --git a/tests/world_editor/integration.rs b/tests/world_editor/integration.rs
+index 31d2f80..61a1156 100644
+--- a/tests/world_editor/integration.rs
++++ b/tests/world_editor/integration.rs
+@@ -7,6 +7,83 @@ mod block_definitions;
+ mod block_registry;
+ #[path = "../../src/colors.rs"]
+ mod colors;
++#[path = "../../src/biome_definitions.rs"]
++mod biome_definitions;
++#[path = "../../src/biome_registry.rs"]
++mod biome_registry;
++
++// Additional stubs and modules needed for biome and OSM element tests
++mod args {
++    use std::time::Duration;
++
++    #[derive(Default)]
++    pub struct Args {
++        pub timeout: Option<Duration>,
++    }
++}
++
++#[path = "../../src/biomes.rs"]
++mod biomes;
++
++mod element_processing {
++    pub mod tree {
++        use crate::world_editor::WorldEditor;
++
++        pub struct Tree;
++
++        impl Tree {
++            pub fn create(_editor: &mut WorldEditor, _pos: (i32, i32, i32)) {}
++        }
++    }
++}
++
++mod floodfill {
++    pub fn flood_fill_area(
++        polygon: &[(i32, i32)],
++        _timeout: Option<&std::time::Duration>,
++    ) -> Vec<(i32, i32)> {
++        polygon.to_vec()
++    }
++}
++
++mod osm_parser {
++    use std::collections::HashMap;
++
++    #[derive(Clone)]
++    pub struct ProcessedNode {
++        pub x: i32,
++        pub z: i32,
++    }
++
++    #[derive(Clone)]
++    pub struct ProcessedWay {
++        pub id: u64,
++        pub nodes: Vec<ProcessedNode>,
++        pub tags: HashMap<String, String>,
++    }
++
++    #[derive(Clone)]
++    pub enum ProcessedMemberRole {
++        Outer,
++        Inner,
++    }
++
++    #[derive(Clone)]
++    pub struct ProcessedMember {
++        pub role: ProcessedMemberRole,
++        pub way: ProcessedWay,
++    }
++
++    #[derive(Clone)]
++    pub struct ProcessedRelation {
++        pub id: u64,
++        pub tags: HashMap<String, String>,
++        pub members: Vec<ProcessedMember>,
++    }
++}
++
++#[path = "../../src/element_processing/landuse.rs"]
++mod landuse;
+ 
+ // Minimal stubs for modules referenced by world_editor.rs
+ mod coordinate_system {
+@@ -102,6 +179,7 @@ mod world_editor {
+ 
+         // Block in chunk (0,0)
+         editor.set_block_absolute(block_definitions::OAK_PLANKS, 1, 64, 1, None, None);
++        editor.set_biome_absolute(biome_definitions::DESERT, 1, 64, 1);
+ 
+         // Block with properties in chunk (1,0)
+         let mut sign_props = std::collections::HashMap::new();
+@@ -160,6 +238,34 @@ mod world_editor {
+         assert_eq!(item0.name, "minecraft:oak_planks");
+         assert!(item0.properties.is_none());
+ 
++        // Verify biome in chunk (0,0)
++        let biome_data0 = section0
++            .biomes
++            .data
++            .as_ref()
++            .unwrap()
++            .clone()
++            .into_inner();
++        let bits_per_biome0 = biome_data0.len() * 64 / 4096;
++        let maskb0 = (1u64 << bits_per_biome0) - 1;
++        let mut bindices0 = Vec::with_capacity(4096);
++        let mut biter0 = biome_data0.iter();
++        let mut bcur0 = *biter0.next().unwrap() as u64;
++        let mut bcur_idx0 = 0;
++        for _ in 0..4096 {
++            if bcur_idx0 + bits_per_biome0 > 64 {
++                bcur0 = *biter0.next().unwrap() as u64;
++                bcur_idx0 = 0;
++            }
++            let p = ((bcur0 >> bcur_idx0) & maskb0) as usize;
++            bcur_idx0 += bits_per_biome0;
++            bindices0.push(p);
++        }
++        let bidx0 = SectionToModify::index(1, 0, 1);
++        let bpalette_idx0 = bindices0[bidx0];
++        let biome0 = &section0.biomes.palette[bpalette_idx0];
++        assert_eq!(biome0, "minecraft:desert");
++
+         // Verify block with properties in chunk (1,0)
+         let chunk1_bytes = region.read_chunk(1, 0).unwrap().unwrap();
+         let chunk1: Chunk = fastnbt::from_bytes(&chunk1_bytes).unwrap();
+@@ -192,4 +298,101 @@ mod world_editor {
+         assert_eq!(item1.name, "minecraft:oak_sign");
+         assert_eq!(item1.properties, Some(sign_props_value));
+     }
++
++    /// Creates a small world editor, sets a biome, saves and verifies the
++    /// biome palette in the chunk NBT.
++    #[test]
++    fn save_writes_biome_palette_only() {
++        use fastanvil::Region;
++        use std::fs::File;
++        use tempfile::tempdir;
++
++        let dir = tempdir().unwrap();
++        std::fs::create_dir(dir.path().join("region")).unwrap();
++
++        let xzbbox = coordinate_system::cartesian::XZBBox;
++        let llbbox = coordinate_system::geographic::LLBBox;
++        let mut editor = WorldEditor::new(dir.path().to_path_buf(), &xzbbox, llbbox);
++
++        editor.set_biome_absolute(biome_definitions::FOREST, 1, 64, 1);
++        editor.save();
++
++        let region_path = dir.path().join("region").join("r.0.0.mca");
++        let mut region = Region::from_stream(File::open(region_path).unwrap()).unwrap();
++        let chunk_bytes = region.read_chunk(0, 0).unwrap().unwrap();
++        let chunk: Chunk = fastnbt::from_bytes(&chunk_bytes).unwrap();
++        let section = chunk.sections.iter().find(|s| s.y == 4).unwrap();
++        let biome_data = section.biomes.data.as_ref().unwrap().clone().into_inner();
++        let bits_per_biome = biome_data.len() * 64 / 4096;
++        let mask = (1u64 << bits_per_biome) - 1;
++        let mut indices = Vec::with_capacity(4096);
++        let mut iter = biome_data.iter();
++        let mut cur = *iter.next().unwrap() as u64;
++        let mut cur_idx = 0;
++        for _ in 0..4096 {
++            if cur_idx + bits_per_biome > 64 {
++                cur = *iter.next().unwrap() as u64;
++                cur_idx = 0;
++            }
++            let p = ((cur >> cur_idx) & mask) as usize;
++            cur_idx += bits_per_biome;
++            indices.push(p);
++        }
++        let idx = SectionToModify::index(1, 0, 1);
++        let palette_idx = indices[idx];
++        assert_eq!(section.biomes.palette[palette_idx], "minecraft:forest");
++    }
++
++    /// Ensures that an OSM-derived landuse element sets the biome correctly
++    /// through the WorldEditor.
++    #[test]
++    fn landuse_sets_biomes() {
++        use fastanvil::Region;
++        use std::collections::HashMap;
++        use std::fs::File;
++        use tempfile::tempdir;
++
++        let dir = tempdir().unwrap();
++        std::fs::create_dir(dir.path().join("region")).unwrap();
++
++        let xzbbox = coordinate_system::cartesian::XZBBox;
++        let llbbox = coordinate_system::geographic::LLBBox;
++        let mut editor = WorldEditor::new(dir.path().to_path_buf(), &xzbbox, llbbox);
++
++        let mut tags = HashMap::new();
++        tags.insert("landuse".to_string(), "forest".to_string());
++        let way = super::osm_parser::ProcessedWay {
++            id: 1,
++            nodes: vec![super::osm_parser::ProcessedNode { x: 1, z: 1 }],
++            tags,
++        };
++        let args = super::args::Args::default();
++        super::landuse::generate_landuse(&mut editor, &way, &args);
++        editor.save();
++
++        let region_path = dir.path().join("region").join("r.0.0.mca");
++        let mut region = Region::from_stream(File::open(region_path).unwrap()).unwrap();
++        let chunk_bytes = region.read_chunk(0, 0).unwrap().unwrap();
++        let chunk: Chunk = fastnbt::from_bytes(&chunk_bytes).unwrap();
++        let section = chunk.sections.iter().find(|s| s.y == 0).unwrap();
++        let biome_data = section.biomes.data.as_ref().unwrap().clone().into_inner();
++        let bits_per_biome = biome_data.len() * 64 / 4096;
++        let mask = (1u64 << bits_per_biome) - 1;
++        let mut indices = Vec::with_capacity(4096);
++        let mut iter = biome_data.iter();
++        let mut cur = *iter.next().unwrap() as u64;
++        let mut cur_idx = 0;
++        for _ in 0..4096 {
++            if cur_idx + bits_per_biome > 64 {
++                cur = *iter.next().unwrap() as u64;
++                cur_idx = 0;
++            }
++            let p = ((cur >> cur_idx) & mask) as usize;
++            cur_idx += bits_per_biome;
++            indices.push(p);
++        }
++        let idx = SectionToModify::index(1, 0, 1);
++        let palette_idx = indices[idx];
++        assert_eq!(section.biomes.palette[palette_idx], "minecraft:forest");
++    }
+ }
+diff --git a/tests/world_editor/section.rs b/tests/world_editor/section.rs
+index 088c2c3..2a7888e 100644
+--- a/tests/world_editor/section.rs
++++ b/tests/world_editor/section.rs
+@@ -4,6 +4,10 @@ mod colors;
+ mod block_definitions;
+ #[path = "../../src/block_registry.rs"]
+ mod block_registry;
++#[path = "../../src/biome_definitions.rs"]
++mod biome_definitions;
++#[path = "../../src/biome_registry.rs"]
++mod biome_registry;
+ 
+ // Minimal stubs for modules referenced by world_editor.rs
+ mod coordinate_system {
+@@ -86,5 +90,23 @@ mod world_editor {
+         let section = SectionToModify::default();
+         assert!(section.block_ids.iter().all(|&id| id == block_registry::AIR_ID));
+     }
++
++    #[test]
++    fn set_biome_stores_id() {
++        let mut section = SectionToModify::default();
++        section.set_biome(1, 2, 3, biome_definitions::FOREST);
++        let idx = SectionToModify::index(1, 2, 3);
++        assert_eq!(
++            section.biome_ids[idx],
++            biome_registry::id(biome_definitions::FOREST)
++        );
++    }
++
++    #[test]
++    fn default_biomes_are_plains() {
++        let section = SectionToModify::default();
++        let plains_id = biome_registry::id(biome_definitions::PLAINS);
++        assert!(section.biome_ids.iter().all(|&id| id == plains_id));
++    }
+ }
+ 
+diff --git a/tests/world_editor/serialization.rs b/tests/world_editor/serialization.rs
+index 5feddf0..6415c24 100644
+--- a/tests/world_editor/serialization.rs
++++ b/tests/world_editor/serialization.rs
+@@ -4,6 +4,10 @@ mod colors;
+ mod block_definitions;
+ #[path = "../../src/block_registry.rs"]
+ mod block_registry;
++#[path = "../../src/biome_definitions.rs"]
++mod biome_definitions;
++#[path = "../../src/biome_registry.rs"]
++mod biome_registry;
+ 
+ // Minimal stubs for modules referenced by world_editor.rs
+ mod coordinate_system {
+@@ -178,6 +182,35 @@ mod world_editor {
+         let air_palette_idx = indices[air_idx];
+         let air_item = &nbt_section.block_states.palette[air_palette_idx];
+         assert_eq!(air_item.name, "minecraft:air");
++
++        // Verify biome serialization
++        section.set_biome(0, 0, 0, biome_definitions::DESERT);
++        let nbt_section = section.to_section(0);
++        let biome_data = nbt_section
++            .biomes
++            .data
++            .as_ref()
++            .expect("biome data")
++            .clone()
++            .into_inner();
++        let bits_per_biome = biome_data.len() * 64 / 4096;
++        let mask = (1u64 << bits_per_biome) - 1;
++        let mut indices = Vec::with_capacity(4096);
++        let mut iter = biome_data.iter();
++        let mut cur = *iter.next().unwrap() as u64;
++        let mut cur_idx = 0;
++        for _ in 0..4096 {
++            if cur_idx + bits_per_biome > 64 {
++                cur = *iter.next().unwrap() as u64;
++                cur_idx = 0;
++            }
++            let p = ((cur >> cur_idx) & mask) as usize;
++            cur_idx += bits_per_biome;
++            indices.push(p);
++        }
++        let idx = SectionToModify::index(0, 0, 0);
++        let palette_idx = indices[idx];
++        assert_eq!(nbt_section.biomes.palette[palette_idx], "minecraft:desert");
+     }
+ }
+ 
+
