@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod args;
+mod biome_definitions;
+mod biome_registry;
 mod block_definitions;
 mod block_registry;
 mod bresenham;
