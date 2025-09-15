@@ -1,3 +1,11 @@
+//! Maintains a bidirectional mapping between [`Block`] values and compact
+//! `u16` identifiers used throughout the world editor.
+//!
+//! Storing numeric IDs instead of full 16-byte [`Block`] structs lets chunk
+//! sections represent blocks using just two bytes each, yielding an
+//! approximately eightfold reduction in memory usage while still allowing fast
+//! lookups in both directions.
+
 use fnv::FnvHashMap;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
