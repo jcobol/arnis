@@ -600,6 +600,41 @@ impl<'a> WorldEditor<'a> {
         }
     }
 
+    /// Sets a block with properties at the given coordinates.
+    #[inline]
+    pub fn set_block_with_properties(
+        &mut self,
+        block_with_props: BlockWithProperties,
+        x: i32,
+        y: i32,
+        z: i32,
+        override_whitelist: Option<&[Block]>,
+        override_blacklist: Option<&[Block]>,
+    ) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
+
+        let absolute_y = self.get_absolute_y(x, y, z);
+
+        let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z) {
+            if let Some(whitelist) = override_whitelist {
+                whitelist.contains(&existing_block)
+            } else if let Some(blacklist) = override_blacklist {
+                !blacklist.contains(&existing_block)
+            } else {
+                false
+            }
+        } else {
+            true
+        };
+
+        if should_insert {
+            self.world
+                .set_block_with_properties(x, absolute_y, z, block_with_props);
+        }
+    }
+
     /// Sets a block of the specified type at the given coordinates with absolute Y value.
     #[inline]
     pub fn set_block_absolute(
