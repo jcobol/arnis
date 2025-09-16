@@ -36,6 +36,7 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
 
             let points = bresenham_line(prev_node.x, 0, prev_node.z, cur_node.x, 0, cur_node.z);
             let smoothed_points = smooth_diagonal_rails(&points);
+            let mut rail_counter = 0;
 
             for j in 0..smoothed_points.len() {
                 let (bx, _, bz) = smoothed_points[j];
@@ -59,11 +60,24 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                     next.map(|(x, _, z)| (x, z)),
                 );
 
-                editor.set_block(rail_block, bx, 1, bz, None, None);
-
-                if bx % 4 == 0 {
-                    editor.set_block(OAK_LOG, bx, 0, bz, None, None);
+                if rail_counter % 8 == 7
+                    && (rail_block == RAIL_NORTH_SOUTH || rail_block == RAIL_EAST_WEST)
+                {
+                    editor.set_block(REDSTONE_BLOCK, bx, 0, bz, None, None);
+                    let powered_block = if rail_block == RAIL_NORTH_SOUTH {
+                        POWERED_RAIL_NORTH_SOUTH
+                    } else {
+                        POWERED_RAIL_EAST_WEST
+                    };
+                    editor.set_block(powered_block, bx, 1, bz, None, None);
+                } else {
+                    editor.set_block(rail_block, bx, 1, bz, None, None);
+                    if rail_counter % 4 == 0 {
+                        editor.set_block(OAK_LOG, bx, 0, bz, None, None);
+                    }
                 }
+
+                rail_counter += 1;
             }
         }
     }
