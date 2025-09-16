@@ -2,6 +2,8 @@ use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
+use fastnbt::Value;
+use std::collections::HashMap;
 
 pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
     if let Some(railway_type) = element.tags.get("railway") {
@@ -61,15 +63,40 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                 );
 
                 if rail_counter % 8 == 7
-                    && (rail_block == RAIL_NORTH_SOUTH || rail_block == RAIL_EAST_WEST)
+                    && (rail_block == RAIL_NORTH_SOUTH
+                        || rail_block == RAIL_EAST_WEST
+                        || rail_block == RAIL_ASCENDING_EAST
+                        || rail_block == RAIL_ASCENDING_WEST
+                        || rail_block == RAIL_ASCENDING_NORTH
+                        || rail_block == RAIL_ASCENDING_SOUTH)
                 {
                     editor.set_block(REDSTONE_BLOCK, bx, 0, bz, None, None);
-                    let powered_block = if rail_block == RAIL_NORTH_SOUTH {
-                        POWERED_RAIL_NORTH_SOUTH
+                    let shape = if rail_block == RAIL_EAST_WEST {
+                        "east_west"
+                    } else if rail_block == RAIL_ASCENDING_EAST {
+                        "ascending_east"
+                    } else if rail_block == RAIL_ASCENDING_WEST {
+                        "ascending_west"
+                    } else if rail_block == RAIL_ASCENDING_NORTH {
+                        "ascending_north"
+                    } else if rail_block == RAIL_ASCENDING_SOUTH {
+                        "ascending_south"
                     } else {
-                        POWERED_RAIL_EAST_WEST
+                        "north_south"
                     };
-                    editor.set_block(powered_block, bx, 1, bz, None, None);
+                    let properties = Value::Compound(HashMap::from([
+                        ("shape".to_string(), Value::String(shape.to_string())),
+                        ("powered".to_string(), Value::String("true".to_string())),
+                    ]));
+                    let absolute_y = editor.get_absolute_y(bx, 1, bz);
+                    editor.set_block_with_properties_absolute(
+                        BlockWithProperties::new(POWERED_RAIL, Some(properties)),
+                        bx,
+                        absolute_y,
+                        bz,
+                        None,
+                        None,
+                    );
                 } else {
                     editor.set_block(rail_block, bx, 1, bz, None, None);
                     if rail_counter % 4 == 0 {

@@ -103,102 +103,48 @@ impl Block {
     /// rotation and waterlogged state start from these defaults before
     /// applying overrides.
     pub fn properties(&self) -> Option<Value> {
-        if std::ptr::eq(self, &POWERED_RAIL_NORTH_SOUTH) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("north_south".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL_EAST_WEST) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert("shape".to_string(), Value::String("east_west".to_string()));
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_EAST) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("ascending_east".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_WEST) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("ascending_west".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_NORTH) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("ascending_north".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL_ASCENDING_SOUTH) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("ascending_south".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else if std::ptr::eq(self, &POWERED_RAIL) {
-            let mut map: HashMap<String, Value> = HashMap::new();
-            map.insert("powered".to_string(), Value::String("true".to_string()));
-            map.insert(
-                "shape".to_string(),
-                Value::String("north_south".to_string()),
-            );
-            Some(Value::Compound(map))
-        } else {
-            match self.name {
-                "minecraft:birch_leaves" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("persistent".to_string(), Value::String("true".to_string()));
-                    map
-                })),
-                "minecraft:oak_leaves" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("persistent".to_string(), Value::String("true".to_string()));
-                    map
-                })),
-                "minecraft:carrots" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("age".to_string(), Value::String("7".to_string()));
-                    map
-                })),
-                "minecraft:potatoes" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("age".to_string(), Value::String("7".to_string()));
-                    map
-                })),
-                "minecraft:wheat" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("age".to_string(), Value::String("7".to_string()));
-                    map
-                })),
-                "minecraft:oak_sign" => Some(Value::Compound({
-                    let mut map: HashMap<String, Value> = HashMap::new();
-                    map.insert("rotation".to_string(), Value::String("6".to_string()));
-                    map.insert(
-                        "waterlogged".to_string(),
-                        Value::String("false".to_string()),
-                    );
-                    map
-                })),
-                "minecraft:oak_trapdoor" => Some(Value::Compound({
-                    let mut map = HashMap::new();
-                    map.insert("half".to_string(), Value::String("top".to_string()));
-                    map
-                })),
-                _ => None,
-            }
+        match self.name {
+            "minecraft:powered_rail" => None,
+            "minecraft:birch_leaves" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("persistent".to_string(), Value::String("true".to_string()));
+                map
+            })),
+            "minecraft:oak_leaves" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("persistent".to_string(), Value::String("true".to_string()));
+                map
+            })),
+            "minecraft:carrots" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("age".to_string(), Value::String("7".to_string()));
+                map
+            })),
+            "minecraft:potatoes" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("age".to_string(), Value::String("7".to_string()));
+                map
+            })),
+            "minecraft:wheat" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("age".to_string(), Value::String("7".to_string()));
+                map
+            })),
+            "minecraft:oak_sign" => Some(Value::Compound({
+                let mut map: HashMap<String, Value> = HashMap::new();
+                map.insert("rotation".to_string(), Value::String("6".to_string()));
+                map.insert(
+                    "waterlogged".to_string(),
+                    Value::String("false".to_string()),
+                );
+                map
+            })),
+            "minecraft:oak_trapdoor" => Some(Value::Compound({
+                let mut map = HashMap::new();
+                map.insert("half".to_string(), Value::String("top".to_string()));
+                map
+            })),
+            _ => None,
         }
     }
 }
@@ -391,12 +337,6 @@ pub const DARK_OAK_DOOR_UPPER: Block = Block::new("minecraft:dark_oak_door");
 pub const POTATOES: Block = Block::new("minecraft:potatoes");
 pub const WHEAT: Block = Block::new("minecraft:wheat");
 pub const BEDROCK: Block = Block::new("minecraft:bedrock");
-pub const POWERED_RAIL_NORTH_SOUTH: Block = Block::new("minecraft:powered_rail");
-pub const POWERED_RAIL_EAST_WEST: Block = Block::new("minecraft:powered_rail");
-pub const POWERED_RAIL_ASCENDING_EAST: Block = Block::new("minecraft:powered_rail");
-pub const POWERED_RAIL_ASCENDING_WEST: Block = Block::new("minecraft:powered_rail");
-pub const POWERED_RAIL_ASCENDING_NORTH: Block = Block::new("minecraft:powered_rail");
-pub const POWERED_RAIL_ASCENDING_SOUTH: Block = Block::new("minecraft:powered_rail");
 pub const RAIL_NORTH_SOUTH: Block = Block::new("minecraft:rail");
 pub const RAIL_EAST_WEST: Block = Block::new("minecraft:rail");
 pub const RAIL_ASCENDING_EAST: Block = Block::new("minecraft:rail");
