@@ -104,6 +104,7 @@ impl Block {
     /// applying overrides.
     pub fn properties(&self) -> Option<Value> {
         match self.name {
+            "minecraft:powered_rail" => None,
             "minecraft:birch_leaves" => Some(Value::Compound({
                 let mut map: HashMap<String, Value> = HashMap::new();
                 map.insert("persistent".to_string(), Value::String("true".to_string()));
@@ -280,6 +281,7 @@ pub const POLISHED_BLACKSTONE: Block = Block::new("minecraft:polished_blackstone
 pub const POLISHED_DEEPSLATE: Block = Block::new("minecraft:polished_deepslate");
 pub const POLISHED_DIORITE: Block = Block::new("minecraft:polished_diorite");
 pub const POLISHED_GRANITE: Block = Block::new("minecraft:polished_granite");
+pub const POWERED_RAIL: Block = Block::new("minecraft:powered_rail");
 pub const PRISMARINE: Block = Block::new("minecraft:prismarine");
 pub const PURPUR_BLOCK: Block = Block::new("minecraft:purpur_block");
 pub const PURPUR_PILLAR: Block = Block::new("minecraft:purpur_pillar");
@@ -287,6 +289,7 @@ pub const QUARTZ_BRICKS: Block = Block::new("minecraft:quartz_bricks");
 pub const RAIL: Block = Block::new("minecraft:rail");
 pub const RED_FLOWER: Block = Block::new("minecraft:poppy");
 pub const RED_NETHER_BRICK: Block = Block::new("minecraft:red_nether_bricks");
+pub const REDSTONE_BLOCK: Block = Block::new("minecraft:redstone_block");
 pub const RED_TERRACOTTA: Block = Block::new("minecraft:red_terracotta");
 pub const RED_WOOL: Block = Block::new("minecraft:red_wool");
 pub const SAND: Block = Block::new("minecraft:sand");
