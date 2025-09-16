@@ -70,7 +70,6 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                         || rail_block == RAIL_ASCENDING_NORTH
                         || rail_block == RAIL_ASCENDING_SOUTH)
                 {
-                    editor.set_block(REDSTONE_BLOCK, bx, 0, bz, None, None);
                     let shape = if rail_block == RAIL_EAST_WEST {
                         "east_west"
                     } else if rail_block == RAIL_ASCENDING_EAST {
@@ -89,6 +88,14 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                         ("powered".to_string(), Value::String("true".to_string())),
                     ]));
                     let absolute_y = editor.get_absolute_y(bx, 1, bz);
+                    editor.set_block_absolute(
+                        REDSTONE_BLOCK,
+                        bx,
+                        absolute_y - 1,
+                        bz,
+                        None,
+                        Some(&[]),
+                    );
                     editor.set_block_with_properties_absolute(
                         BlockWithProperties::new(POWERED_RAIL, Some(properties)),
                         bx,
