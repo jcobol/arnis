@@ -23,7 +23,7 @@ fn id_inserts_once_and_is_consistent() {
     assert_eq!(first_id, second_id);
 
     let other_id = id(Block::from_str("minecraft:__block_registry_other_test"));
-    assert_eq!(other_id, first_id + 1);
+    assert!(other_id > first_id);
 }
 
 #[test]

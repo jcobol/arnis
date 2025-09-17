@@ -7,6 +7,8 @@ use std::time::Instant;
 use crate::bresenham::bresenham_line;
 
 use crate::{
+    biome_definitions::{self, Biome},
+    biomes::biome_from_tags,
     block_definitions::WATER,
     coordinate_system::cartesian::XZPoint,
     osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay},
@@ -21,6 +23,7 @@ fn generate_water_areas_internal(
     fill_outside: bool,
 ) {
     let start_time = Instant::now();
+    let biome = biome_from_tags(&element.tags).unwrap_or(biome_definitions::PLAINS);
 
     if !fill_outside {
         let is_water = element.tags.contains_key("water")
@@ -68,7 +71,7 @@ fn generate_water_areas_internal(
         } else {
             0
         };
-        fill_from_barriers(editor, &all_lines, false, water_level);
+        fill_from_barriers(editor, &all_lines, false, water_level, biome);
         return;
     }
 
@@ -92,7 +95,7 @@ fn generate_water_areas_internal(
             } else {
                 0
             };
-            fill_from_barriers(editor, &all_lines, false, water_level);
+            fill_from_barriers(editor, &all_lines, false, water_level, biome);
             return;
         }
 
@@ -108,7 +111,7 @@ fn generate_water_areas_internal(
             } else {
                 0
             };
-            fill_from_barriers(editor, &all_lines, false, water_level);
+            fill_from_barriers(editor, &all_lines, false, water_level, biome);
             return;
         }
 
@@ -192,6 +195,7 @@ fn generate_water_areas_internal(
             editor,
             start_time,
             fill_outside,
+            biome,
         );
     }
 }
@@ -206,6 +210,7 @@ fn generate_water_area_from_way_internal(
     fill_outside: bool,
 ) {
     let start_time = Instant::now();
+    let biome = biome_from_tags(&way.tags).unwrap_or(biome_definitions::PLAINS);
 
     if !fill_outside {
         let is_water = way.tags.contains_key("water")
@@ -240,7 +245,13 @@ fn generate_water_area_from_way_internal(
         } else {
             0
         };
-        fill_from_barriers(editor, &[way.nodes.clone()], fill_outside, water_level);
+        fill_from_barriers(
+            editor,
+            &[way.nodes.clone()],
+            fill_outside,
+            water_level,
+            biome,
+        );
         return;
     }
 
@@ -273,6 +284,7 @@ fn generate_water_area_from_way_internal(
         editor,
         start_time,
         fill_outside,
+        biome,
     );
 }
 
@@ -457,6 +469,7 @@ fn fill_from_barriers(
     lines: &[Vec<ProcessedNode>],
     fill_outside: bool,
     water_level: i32,
+    biome: Biome,
 ) {
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
@@ -531,6 +544,7 @@ fn fill_from_barriers(
                         });
                         for y in water_level..=terrain {
                             editor.set_block_absolute(WATER, world_x, y, world_z, None, Some(&[]));
+                            editor.set_biome_absolute(biome, world_x, y, world_z);
                         }
                     } else {
                         editor.set_block_absolute(
@@ -541,6 +555,7 @@ fn fill_from_barriers(
                             None,
                             Some(&[]),
                         );
+                        editor.set_biome_absolute(biome, world_x, water_level, world_z);
                     }
                 } else {
                     editor.set_block_absolute(
@@ -551,6 +566,7 @@ fn fill_from_barriers(
                         None,
                         Some(&[]),
                     );
+                    editor.set_biome_absolute(biome, world_x, water_level, world_z);
                 }
             }
         }
@@ -571,7 +587,7 @@ pub fn generate_coastlines(editor: &mut WorldEditor, ways: &[Vec<ProcessedNode>]
     } else {
         0
     };
-    fill_from_barriers(editor, ways, true, level);
+    fill_from_barriers(editor, ways, true, level, biome_definitions::OCEAN);
 }
 
 // Merges ways that share nodes into full loops
@@ -681,6 +697,7 @@ fn inverse_floodfill(
     editor: &mut WorldEditor,
     start_time: Instant,
     fill_outside: bool,
+    biome: Biome,
 ) {
     let inners: Vec<_> = inners
         .into_iter()
@@ -719,6 +736,7 @@ fn inverse_floodfill(
         editor,
         start_time,
         fill_outside,
+        biome,
     );
 }
 
@@ -731,11 +749,21 @@ fn inverse_floodfill_recursive(
     editor: &mut WorldEditor,
     start_time: Instant,
     fill_outside: bool,
+    biome: Biome,
 ) {
     // Check if we've exceeded 25 seconds
     if start_time.elapsed().as_secs() > 25 {
         // Fall back: brute-force fill for the remaining region so we never leave it empty.
-        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
+        inverse_floodfill_iterative(
+            min,
+            max,
+            water_level,
+            outers,
+            inners,
+            editor,
+            fill_outside,
+            biome,
+        );
         return;
     }
 
@@ -748,7 +776,16 @@ fn inverse_floodfill_recursive(
     // Multiply as i64 to avoid overflow; in release builds where unchecked math is
     // enabled, this could cause the rest of this code to end up in an infinite loop.
     if ((max.0 - min.0) as i64) * ((max.1 - min.1) as i64) < ITERATIVE_THRES {
-        inverse_floodfill_iterative(min, max, water_level, outers, inners, editor, fill_outside);
+        inverse_floodfill_iterative(
+            min,
+            max,
+            water_level,
+            outers,
+            inners,
+            editor,
+            fill_outside,
+            biome,
+        );
         return;
     }
 
@@ -787,7 +824,7 @@ fn inverse_floodfill_recursive(
                 && outers_intersects.is_empty()
                 && inners_intersects.is_empty())
         {
-            rect_fill(min_x, max_x, min_z, max_z, water_level, editor);
+            rect_fill(min_x, max_x, min_z, max_z, water_level, editor, biome);
             continue;
         }
 
@@ -801,6 +838,7 @@ fn inverse_floodfill_recursive(
                 editor,
                 start_time,
                 fill_outside,
+                biome,
             );
         }
     }
@@ -815,6 +853,7 @@ fn inverse_floodfill_iterative(
     inners: &[Polygon],
     editor: &mut WorldEditor,
     fill_outside: bool,
+    biome: Biome,
 ) {
     let ground = editor.get_ground().cloned();
     let (min_x, min_z) = editor.get_min_coords();
@@ -841,12 +880,15 @@ fn inverse_floodfill_iterative(
                         });
                         for y in water_level..=terrain {
                             editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
+                            editor.set_biome_absolute(biome, x, y, z);
                         }
                     } else {
                         editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
+                        editor.set_biome_absolute(biome, x, water_level, z);
                     }
                 } else {
                     editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
+                    editor.set_biome_absolute(biome, x, water_level, z);
                 }
             }
         }
@@ -860,6 +902,7 @@ fn rect_fill(
     max_z: i32,
     water_level: i32,
     editor: &mut WorldEditor,
+    biome: Biome,
 ) {
     let ground = editor.get_ground().cloned();
     let (min_x_world, min_z_world) = editor.get_min_coords();
@@ -876,12 +919,15 @@ fn rect_fill(
                     });
                     for y in water_level..=terrain {
                         editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
+                        editor.set_biome_absolute(biome, x, y, z);
                     }
                 } else {
                     editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
+                    editor.set_biome_absolute(biome, x, water_level, z);
                 }
             } else {
                 editor.set_block_absolute(WATER, x, water_level, z, None, Some(&[]));
+                editor.set_biome_absolute(biome, x, water_level, z);
             }
         }
     }

@@ -4,6 +4,10 @@ mod colors;
 mod block_definitions;
 #[path = "../../src/block_registry.rs"]
 mod block_registry;
+#[path = "../../src/biome_definitions.rs"]
+mod biome_definitions;
+#[path = "../../src/biome_registry.rs"]
+mod biome_registry;
 
 // Minimal stubs for modules referenced by world_editor.rs
 mod coordinate_system {
@@ -178,6 +182,44 @@ mod world_editor {
         let air_palette_idx = indices[air_idx];
         let air_item = &nbt_section.block_states.palette[air_palette_idx];
         assert_eq!(air_item.name, "minecraft:air");
+
+        assert_eq!(nbt_section.biomes.palette, vec!["minecraft:plains".to_string()]);
+        assert!(nbt_section.biomes.data.is_none());
+    }
+
+    #[test]
+    fn biome_serialization_writes_palette_and_data() {
+        let mut section = SectionToModify::default();
+        section.set_biome(0, 0, 0, biome_definitions::DESERT);
+        let nbt_section = section.to_section(0);
+        assert_eq!(nbt_section.biomes.palette.len(), 2);
+        assert!(nbt_section.biomes.palette.contains(&"minecraft:plains".to_string()));
+        assert!(nbt_section.biomes.palette.contains(&"minecraft:desert".to_string()));
+        let biome_data = nbt_section
+            .biomes
+            .data
+            .as_ref()
+            .expect("biome data")
+            .clone()
+            .into_inner();
+        let entry_count = 64; // biomes stored on a 4×4×4 grid
+        let bits_per_biome = biome_data.len() * 64 / entry_count;
+        let mask = (1u64 << bits_per_biome) - 1;
+        let mut indices = Vec::with_capacity(entry_count);
+        let mut iter = biome_data.iter();
+        let mut cur = *iter.next().unwrap() as u64;
+        let mut cur_idx = 0;
+        for _ in 0..entry_count {
+            if cur_idx + bits_per_biome > 64 {
+                cur = *iter.next().unwrap() as u64;
+                cur_idx = 0;
+            }
+            let p = ((cur >> cur_idx) & mask) as usize;
+            cur_idx += bits_per_biome;
+            indices.push(p);
+        }
+        let idx = SectionToModify::biome_index(0, 0, 0);
+        let palette_idx = indices[idx];
+        assert_eq!(nbt_section.biomes.palette[palette_idx], "minecraft:desert");
     }
 }
-

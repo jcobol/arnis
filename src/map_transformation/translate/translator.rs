@@ -66,7 +66,9 @@ pub fn translate_by_vector(
 mod tests {
     use super::*;
     use crate::coordinate_system::cartesian::XZVector;
-    use crate::test_utilities::generate_default_example;
+    use crate::osm_parser;
+    use crate::retrieve_data;
+    use crate::test_utilities::get_llbbox_arnis;
 
     // this ensures translate_by_vector function is correct
     #[test]
@@ -75,7 +77,7 @@ mod tests {
         let dz: i32 = -234;
         let vector = XZVector { dx, dz };
 
-        let (xzbbox1, elements1) = generate_default_example();
+        let (xzbbox1, elements1) = load_fixture_example();
 
         let mut xzbbox2 = xzbbox1.clone();
         let mut elements2 = elements1.clone();
@@ -120,5 +122,14 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn load_fixture_example() -> (XZBBox, Vec<ProcessedElement>) {
+        let llbbox = get_llbbox_arnis();
+        let raw = retrieve_data::fetch_data_from_file("tests/fixtures/arnis_overpass.json")
+            .expect("fixture must be present");
+        let (mut parsed, bbox) = osm_parser::parse_osm_data(raw, llbbox, 1.0, false);
+        parsed.sort_by_key(|element| osm_parser::get_priority(element));
+        (bbox, parsed)
     }
 }

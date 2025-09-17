@@ -7,6 +7,12 @@ mod block_definitions;
 mod block_registry;
 #[path = "../../src/colors.rs"]
 mod colors;
+#[path = "../../src/biome_definitions.rs"]
+mod biome_definitions;
+#[path = "../../src/biome_registry.rs"]
+mod biome_registry;
+#[path = "../../src/biomes.rs"]
+mod biomes;
 
 // Minimal stubs for modules referenced by world_editor.rs
 mod coordinate_system {
@@ -191,5 +197,48 @@ mod world_editor {
         let item1 = &section1.block_states.palette[palette_idx1];
         assert_eq!(item1.name, "minecraft:oak_sign");
         assert_eq!(item1.properties, Some(sign_props_value));
+    }
+
+    #[test]
+    fn save_writes_biome_palette_only() {
+        use fastanvil::Region;
+        use std::fs::File;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("region")).unwrap();
+
+        let xzbbox = coordinate_system::cartesian::XZBBox;
+        let llbbox = coordinate_system::geographic::LLBBox;
+        let mut editor = WorldEditor::new(dir.path().to_path_buf(), &xzbbox, llbbox);
+
+        editor.set_biome_absolute(biome_definitions::FOREST, 1, 64, 1);
+        editor.save();
+
+        let region_path = dir.path().join("region").join("r.0.0.mca");
+        let mut region = Region::from_stream(File::open(region_path).unwrap()).unwrap();
+        let chunk_bytes = region.read_chunk(0, 0).unwrap().unwrap();
+        let chunk: Chunk = fastnbt::from_bytes(&chunk_bytes).unwrap();
+        let section = chunk.sections.iter().find(|s| s.y == 4).unwrap();
+        let biome_data = section.biomes.data.as_ref().unwrap().clone().into_inner();
+        let entry_count = 64; // biomes stored per 4×4×4 cube
+        let bits_per_biome = biome_data.len() * 64 / entry_count;
+        let mask = (1u64 << bits_per_biome) - 1;
+        let mut indices = Vec::with_capacity(entry_count);
+        let mut iter = biome_data.iter();
+        let mut cur = *iter.next().unwrap() as u64;
+        let mut cur_idx = 0;
+        for _ in 0..entry_count {
+            if cur_idx + bits_per_biome > 64 {
+                cur = *iter.next().unwrap() as u64;
+                cur_idx = 0;
+            }
+            let p = ((cur >> cur_idx) & mask) as usize;
+            cur_idx += bits_per_biome;
+            indices.push(p);
+        }
+        let idx = SectionToModify::biome_index(1, 0, 1);
+        let palette_idx = indices[idx];
+        assert_eq!(section.biomes.palette[palette_idx], "minecraft:forest");
     }
 }

@@ -1,4 +1,5 @@
 use crate::args::Args;
+use crate::biomes::biome_from_tags;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::element_processing::tree::Tree;
@@ -9,10 +10,15 @@ use rand::Rng;
 
 pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(natural_type) = element.tags().get("natural") {
+        let biome_option = biome_from_tags(element.tags());
         if natural_type == "tree" {
             if let ProcessedElement::Node(node) = element {
                 let x: i32 = node.x;
                 let z: i32 = node.z;
+
+                if let Some(biome) = biome_option {
+                    editor.set_biome(biome, x, 0, z);
+                }
 
                 Tree::create(editor, (x, 1, z));
             }
@@ -59,6 +65,9 @@ pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, ar
                     let bresenham_points: Vec<(i32, i32, i32)> =
                         bresenham_line(prev.0, 0, prev.1, x, 0, z);
                     for (bx, _, bz) in bresenham_points {
+                        if let Some(biome) = biome_option {
+                            editor.set_biome(biome, bx, 0, bz);
+                        }
                         editor.set_block(block_type, bx, 0, bz, None, None);
                     }
 
@@ -82,6 +91,9 @@ pub fn generate_natural(editor: &mut WorldEditor, element: &ProcessedElement, ar
                 let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
 
                 for (x, z) in filled_area {
+                    if let Some(biome) = biome_option {
+                        editor.set_biome(biome, x, 0, z);
+                    }
                     editor.set_block(block_type, x, 0, z, None, None);
                     // Generate custom layer instead of dirt, must be stone on the lowest level
                     match natural_type.as_str() {

@@ -1,3 +1,5 @@
+use crate::biome_definitions::{self, Biome};
+use crate::biome_registry;
 use crate::block_definitions::*;
 use crate::block_registry::{self, AIR_ID};
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
@@ -75,6 +77,8 @@ struct Chunk {
 #[derive(Serialize, Deserialize)]
 struct Section {
     block_states: Blockstates,
+    #[serde(default)]
+    biomes: Biomes,
     #[serde(rename = "Y")]
     y: i8,
     #[serde(default)]
@@ -94,6 +98,24 @@ struct Blockstates {
 }
 
 #[derive(Serialize, Deserialize)]
+struct Biomes {
+    palette: Vec<String>,
+    data: Option<LongArray>,
+    #[serde(flatten)]
+    other: FnvHashMap<String, Value>,
+}
+
+impl Default for Biomes {
+    fn default() -> Self {
+        Self {
+            palette: vec![biome_definitions::PLAINS.name().to_string()],
+            data: None,
+            other: FnvHashMap::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct PaletteItem {
     #[serde(rename = "Name")]
     name: String,
@@ -110,6 +132,8 @@ struct PaletteItem {
 struct SectionToModify {
     /// Registry `u16` block IDs for a 16×16×16 section, using `AIR_ID` for empty blocks.
     block_ids: [u16; 4096],
+    /// Registry `u16` biome IDs stored on a 4×4×4 grid per section.
+    biome_ids: [u16; 64],
     // Store properties for blocks that have them, indexed by the same index as blocks array
     properties: FnvHashMap<usize, Value>,
 }
@@ -126,6 +150,11 @@ impl SectionToModify {
 
     fn set_block(&mut self, x: u8, y: u8, z: u8, block: Block) {
         self.block_ids[Self::index(x, y, z)] = block_registry::id(block);
+    }
+
+    fn set_biome(&mut self, x: u8, y: u8, z: u8, biome: Biome) {
+        let idx = Self::biome_index(x, y, z);
+        self.biome_ids[idx] = biome_registry::id(biome);
     }
 
     fn set_block_with_properties(
@@ -149,6 +178,14 @@ impl SectionToModify {
 
     fn index(x: u8, y: u8, z: u8) -> usize {
         usize::from(y) % 16 * 256 + usize::from(z) * 16 + usize::from(x)
+    }
+
+    #[inline]
+    fn biome_index(x: u8, y: u8, z: u8) -> usize {
+        let coarse_x = (x >> 2) as usize;
+        let coarse_y = (y >> 2) as usize;
+        let coarse_z = (z >> 2) as usize;
+        coarse_x + (coarse_z << 2) + (coarse_y << 4)
     }
 
     fn to_section(&self, y: i8) -> Section {
@@ -209,10 +246,60 @@ impl SectionToModify {
             })
             .collect();
 
+        let mut unique_biomes: Vec<(u16, Biome)> = Vec::new();
+        let mut biome_lookup: FnvHashMap<u16, usize> = FnvHashMap::default();
+        for &biome_id in self.biome_ids.iter() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = biome_lookup.entry(biome_id) {
+                let palette_index = unique_biomes.len();
+                entry.insert(palette_index);
+                unique_biomes.push((biome_id, biome_registry::biome(biome_id)));
+            }
+        }
+
+        let biome_palette: Vec<String> = unique_biomes
+            .iter()
+            .map(|(_, biome)| biome.name().to_string())
+            .collect();
+
+        let biome_data_option = if unique_biomes.len() <= 1 {
+            None
+        } else {
+            let mut bits_per_biome = 1;
+            while (1 << bits_per_biome) < unique_biomes.len() {
+                bits_per_biome += 1;
+            }
+
+            let mut biome_data = Vec::new();
+            let mut cur = 0i64;
+            let mut cur_idx = 0;
+            for &biome_id in self.biome_ids.iter() {
+                let p = biome_lookup[&biome_id] as i64;
+                if cur_idx + bits_per_biome > 64 {
+                    biome_data.push(cur);
+                    cur = 0;
+                    cur_idx = 0;
+                }
+
+                cur |= p << cur_idx;
+                cur_idx += bits_per_biome;
+            }
+
+            if cur_idx > 0 {
+                biome_data.push(cur);
+            }
+
+            Some(LongArray::new(biome_data))
+        };
+
         Section {
             block_states: Blockstates {
                 palette,
                 data: Some(LongArray::new(data)),
+                other: FnvHashMap::default(),
+            },
+            biomes: Biomes {
+                palette: biome_palette,
+                data: biome_data_option,
                 other: FnvHashMap::default(),
             },
             y,
@@ -225,8 +312,10 @@ impl SectionToModify {
 
 impl Default for SectionToModify {
     fn default() -> Self {
+        let plains_id = biome_registry::id(biome_definitions::PLAINS);
         Self {
             block_ids: [AIR_ID; 4096],
+            biome_ids: [plains_id; 64],
             properties: FnvHashMap::default(),
         }
     }
@@ -253,6 +342,14 @@ impl ChunkToModify {
         let section = self.sections.entry(section_idx).or_default();
 
         section.set_block(x, (y & 15).try_into().unwrap(), z, block);
+    }
+
+    fn set_biome(&mut self, x: u8, y: i32, z: u8, biome: Biome) {
+        let section_idx: i8 = (y >> 4).try_into().unwrap();
+
+        let section = self.sections.entry(section_idx).or_default();
+
+        section.set_biome(x, (y & 15).try_into().unwrap(), z, biome);
     }
 
     fn set_block_with_properties(
@@ -333,6 +430,23 @@ impl WorldToModify {
             y,
             (z & 15).try_into().unwrap(),
             block,
+        );
+    }
+
+    fn set_biome(&mut self, x: i32, y: i32, z: i32, biome: Biome) {
+        let chunk_x: i32 = x >> 4;
+        let chunk_z: i32 = z >> 4;
+        let region_x: i32 = chunk_x >> 5;
+        let region_z: i32 = chunk_z >> 5;
+
+        let region: &mut RegionToModify = self.get_or_create_region(region_x, region_z);
+        let chunk: &mut ChunkToModify = region.get_or_create_chunk(chunk_x & 31, chunk_z & 31);
+
+        chunk.set_biome(
+            (x & 15).try_into().unwrap(),
+            y,
+            (z & 15).try_into().unwrap(),
+            biome,
         );
     }
 
@@ -635,6 +749,24 @@ impl<'a> WorldEditor<'a> {
         }
     }
 
+    /// Sets the biome at the given coordinates using ground-relative Y.
+    #[inline]
+    pub fn set_biome(&mut self, biome: Biome, x: i32, y: i32, z: i32) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
+        let absolute_y = self.get_absolute_y(x, y, z);
+        self.world.set_biome(x, absolute_y, z, biome);
+    }
+
+    /// Sets the biome at the given coordinates using an absolute Y value.
+    #[inline]
+    pub fn set_biome_absolute(&mut self, biome: Biome, x: i32, absolute_y: i32, z: i32) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
+        self.world.set_biome(x, absolute_y, z, biome);
+    }
     /// Sets a block of the specified type at the given coordinates with absolute Y value.
     #[inline]
     pub fn set_block_absolute(
@@ -890,6 +1022,32 @@ impl<'a> WorldEditor<'a> {
                                 ),
                             ])),
                         ),
+                        (
+                            "biomes".to_string(),
+                            Value::Compound(HashMap::from([
+                                (
+                                    "palette".to_string(),
+                                    Value::List(
+                                        section
+                                            .biomes
+                                            .palette
+                                            .iter()
+                                            .map(|name| Value::String(name.clone()))
+                                            .collect(),
+                                    ),
+                                ),
+                                (
+                                    "data".to_string(),
+                                    Value::LongArray(
+                                        section
+                                            .biomes
+                                            .data
+                                            .clone()
+                                            .unwrap_or_else(|| LongArray::new(vec![])),
+                                    ),
+                                ),
+                            ])),
+                        ),
                     ]);
                     if let Some(bl) = &section.block_light {
                         map.insert("block_light".to_string(), Value::ByteArray(bl.clone()));
@@ -1001,6 +1159,8 @@ impl<'a> WorldEditor<'a> {
                                 existing_section.block_states.palette =
                                     new_section.block_states.palette;
                                 existing_section.block_states.data = new_section.block_states.data;
+                                existing_section.biomes.palette = new_section.biomes.palette;
+                                existing_section.biomes.data = new_section.biomes.data;
                                 existing_section.sky_light = new_section.sky_light;
                                 existing_section.block_light = new_section.block_light;
                             } else {
@@ -1190,6 +1350,32 @@ fn create_level_wrapper(chunk: &Chunk) -> HashMap<String, Value> {
                                 Value::LongArray(
                                     section
                                         .block_states
+                                        .data
+                                        .clone()
+                                        .unwrap_or_else(|| LongArray::new(vec![])),
+                                ),
+                            ),
+                        ])),
+                    ),
+                    (
+                        "biomes".to_string(),
+                        Value::Compound(HashMap::from([
+                            (
+                                "palette".to_string(),
+                                Value::List(
+                                    section
+                                        .biomes
+                                        .palette
+                                        .iter()
+                                        .map(|name| Value::String(name.clone()))
+                                        .collect(),
+                                ),
+                            ),
+                            (
+                                "data".to_string(),
+                                Value::LongArray(
+                                    section
+                                        .biomes
                                         .data
                                         .clone()
                                         .unwrap_or_else(|| LongArray::new(vec![])),
