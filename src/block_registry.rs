@@ -34,6 +34,7 @@ static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
         BLUE_TERRACOTTA,
         BRICK,
         CAULDRON,
+        CHAIN,
         CHISELED_STONE_BRICKS,
         COBBLESTONE_WALL,
         COBBLESTONE,

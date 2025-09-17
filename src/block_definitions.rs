@@ -230,6 +230,7 @@ pub const BLUE_FLOWER: Block = Block::new("minecraft:blue_orchid");
 pub const BLUE_TERRACOTTA: Block = Block::new("minecraft:blue_terracotta");
 pub const BRICK: Block = Block::new("minecraft:bricks");
 pub const CAULDRON: Block = Block::new("minecraft:cauldron");
+pub const CHAIN: Block = Block::new("minecraft:chain");
 pub const CHISELED_STONE_BRICKS: Block = Block::new("minecraft:chiseled_stone_bricks");
 pub const COBBLESTONE_WALL: Block = Block::new("minecraft:cobblestone_wall");
 pub const COBBLESTONE: Block = Block::new("minecraft:cobblestone");
