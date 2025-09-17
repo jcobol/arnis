@@ -96,6 +96,11 @@ pub fn generate_world(
                     railways::generate_railways(&mut editor, way);
                 } else if way.tags.contains_key("roller_coaster") {
                     railways::generate_roller_coaster(&mut editor, way);
+                } else if matches!(
+                    way.tags.get("power").map(|value| value.as_str()),
+                    Some("line") | Some("minor_line")
+                ) {
+                    power::generate_power_lines(&mut editor, way);
                 } else if way.tags.contains_key("aeroway") || way.tags.contains_key("area:aeroway")
                 {
                     highways::generate_aeroway(&mut editor, way, args);
@@ -120,6 +125,11 @@ pub fn generate_world(
                     highways::generate_highways(&mut editor, element, args, &elements);
                 } else if node.tags.contains_key("tourism") {
                     tourisms::generate_tourisms(&mut editor, node);
+                } else if matches!(
+                    node.tags.get("power").map(|value| value.as_str()),
+                    Some("pole") | Some("tower")
+                ) {
+                    power::generate_power_node(&mut editor, node);
                 } else if node.tags.contains_key("man_made") {
                     man_made::generate_man_made_nodes(&mut editor, node);
                 }
@@ -146,6 +156,8 @@ pub fn generate_world(
                     landuse::generate_landuse_from_relation(&mut editor, rel, args);
                 } else if rel.tags.get("leisure") == Some(&"park".to_string()) {
                     leisure::generate_leisure_from_relation(&mut editor, rel, args);
+                } else if rel.tags.get("power").is_some() {
+                    power::generate_power_relation(&mut editor, rel);
                 } else if rel.tags.contains_key("man_made") {
                     man_made::generate_man_made(
                         &mut editor,
