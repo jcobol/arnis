@@ -8,6 +8,7 @@ pub mod landuse;
 pub mod leisure;
 pub mod man_made;
 pub mod natural;
+pub mod power;
 pub mod railways;
 pub mod subprocessor;
 pub mod tourisms;

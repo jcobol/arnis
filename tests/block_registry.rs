@@ -11,8 +11,8 @@ use block_registry::*;
 #[test]
 fn known_blocks_have_stable_ids() {
     assert_eq!(id(AIR), AIR_ID);
-    assert_eq!(id(STONE), 86);
-    assert_eq!(id(WATER), 89);
+    assert_eq!(id(STONE), 87);
+    assert_eq!(id(WATER), 90);
 }
 
 #[test]
